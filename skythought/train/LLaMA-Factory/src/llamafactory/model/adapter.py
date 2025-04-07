@@ -253,6 +253,10 @@ def _setup_lora_tuning(
         for param in filter(lambda p: p.requires_grad, model.parameters()):
             param.data = param.data.to(torch.float32)
 
+    for name, param in model.named_parameters():
+        if param.requires_grad:  # 只打印需要训练的参数
+            print(f"Parameter name: {name}, Shape: {param.shape}")
+        
     return model
 
 
@@ -299,6 +303,8 @@ def init_adapter(
         model = _setup_lora_tuning(
             config, model, model_args, finetuning_args, is_trainable, cast_trainable_params_to_fp32
         )
+    elif finetuning_args.finetuning_type == "lora-ga":
+        pass
     else:
         raise NotImplementedError(f"Unknown finetuning type: {finetuning_args.finetuning_type}.")
 

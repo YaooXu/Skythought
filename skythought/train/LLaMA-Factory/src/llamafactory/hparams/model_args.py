@@ -213,6 +213,10 @@ class ModelArguments(QuantizationArguments, ProcessorArguments, ExportArguments,
         default=False,
         metadata={"help": "Enable shift short attention (S^2-Attn) proposed by LongLoRA."},
     )
+    shift_gate: bool = field(
+        default=False,
+        metadata={"help": "."},
+    )
     mixture_of_depths: Optional[Literal["convert", "load"]] = field(
         default=None,
         metadata={"help": "Convert the model to mixture-of-depths (MoD) or load the MoD model."},

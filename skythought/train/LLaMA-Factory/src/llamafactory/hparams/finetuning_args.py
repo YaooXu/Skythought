@@ -124,6 +124,10 @@ class LoraArguments:
         default=False,
         metadata={"help": "Whether or not to create a new adapter with randomly initialized weight."},
     )
+    lora_ga_iters: int = field(
+        default=128,
+        metadata={"help": "The number of iterations for LoRA-GA."},
+    )
 
 
 @dataclass
@@ -366,7 +370,7 @@ class FinetuningArguments(FreezeArguments, LoraArguments, RLHFArguments, GaloreA
         self.freeze_vision_tower = self.freeze_vision_tower or self.train_mm_proj_only
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
 
-        assert self.finetuning_type in ["lora", "freeze", "full"], "Invalid fine-tuning method."
+        assert self.finetuning_type in ["lora", "freeze", "full", "lora-ga"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
 

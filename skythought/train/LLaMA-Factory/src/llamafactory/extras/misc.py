@@ -77,7 +77,7 @@ def check_dependencies() -> None:
     r"""
     Checks the version of the required packages.
     """
-    if os.getenv("DISABLE_VERSION_CHECK", "0").lower() in ["true", "1"]:
+    if os.getenv("DISABLE_VERSION_CHECK", "1").lower() in ["true", "1"]:
         logger.warning_once("Version checking has been disabled, may lead to unexpected behaviors.")
     else:
         require_version("transformers>=4.41.2,<=4.46.1", "To fix: pip install transformers>=4.41.2,<=4.46.1")

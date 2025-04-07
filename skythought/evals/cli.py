@@ -97,7 +97,7 @@ def parse_common_args(
     )
 
     # TODO (sumanthrh): We should ideally read from ctx and get user-provided params
-    if batch_size != 64 and backend != Backend.VLLM:
+    if batch_size != 64 and backend not in (Backend.VLLM, Backend.HF_LOCAL):
         raise ValueError("Batch size is only supported for the vllm backend.")
 
     # Enable hf_transfer if not overridden by the user
@@ -290,7 +290,7 @@ def evaluate(
     model_config = ModelConfig.from_model_id(
         model, system_prompt_name, system_prompt, assistant_prefill
     )
-
+    
     run_config_dict = get_run_config(
         task,
         task_config,
@@ -316,8 +316,8 @@ def evaluate(
         )
     # create result dir if not exists
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
+        os.makedirs(output_dir, exist_ok=True)
+    
     generate_and_score(
         handler,
         model_config,

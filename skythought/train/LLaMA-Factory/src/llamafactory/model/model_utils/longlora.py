@@ -367,7 +367,7 @@ def configure_longlora(config: "PretrainedConfig", model_args: "ModelArguments",
 
     if getattr(config, "model_type", None) in SUPPORTED_CLASS_FOR_S2ATTN:
         setattr(config, "group_size_ratio", 0.25)
-        _apply_llama_patch()
+        # _apply_llama_patch()
         logger.info_rank0("Using shift short attention with group_size_ratio=1/4.")
     else:
         logger.warning_rank0("Current model does not support shift short attention.")

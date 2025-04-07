@@ -20,6 +20,7 @@ class Backend(str, Enum):
     VLLM = "vllm"
     OPENAI = "openai"
     RAY = "ray"
+    HF_LOCAL = "hf_local"
 
 
 class OpenAISamplingParams(BaseModel):
@@ -44,7 +45,7 @@ class SamplingParameters(BaseModel):
         if backend == Backend.OPENAI:
             return cls(params=OpenAISamplingParams(**params))
         # Currently, ray-data based processor only supports vllm as the inference engine
-        elif backend in [Backend.VLLM, Backend.RAY]:
+        elif backend in [Backend.VLLM, Backend.RAY, Backend.HF_LOCAL]:
             return cls(params=VLLMSamplingParams(**params))
         else:
             raise ValueError(f"Invalid backend type: {backend}")
@@ -87,9 +88,9 @@ class RayLLMEngineArgs(BaseModel):
         default=None, description="Data type for inference engine."
     )
 
-    def get_ray_llm_config(self):
+    def get_ray_llm_config(self, config_name='ray_config.yaml'):
         config_path = Path(
-            resources.files("skythought.evals").joinpath("ray_configs/ray_config.yaml")
+            resources.files("skythought.evals").joinpath(f"ray_configs/{config_name}")
         )
         with open(config_path) as f:
             default_config = yaml.safe_load(f)
@@ -130,7 +131,7 @@ class BackendParameters:
     def from_dict(cls, backend_type: Backend, params: dict):
         if backend_type == Backend.RAY:
             return cls(params=RayLLMEngineArgs(**params))
-        elif backend_type == Backend.VLLM:
+        elif backend_type == Backend.VLLM or backend_type == Backend.HF_LOCAL:
             # passed directly to LLM(..) instantiation
             return cls(params=params)
         elif backend_type == Backend.OPENAI:

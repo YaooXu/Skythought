@@ -168,7 +168,8 @@ hf_cache/
 om_cache/
 cache/
 config/
-saves/
+saves*/
 output/
 wandb/
 generated_predictions.jsonl
+skythought/tmp/

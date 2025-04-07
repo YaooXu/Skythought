@@ -1,3 +1,4 @@
+from collections import defaultdict
 import concurrent.futures
 import copy
 import json
@@ -7,12 +8,14 @@ import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
+import pickle
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import ray
 from openai import OpenAI
+import torch
 from tqdm import tqdm
 from vllm import LLM
 
@@ -35,6 +38,14 @@ from skythought.evals.tasks import (
 from skythought.evals.util.metrics import pass_at_k
 from skythought.evals.util.response import Response, SingleParsedResponse
 from skythought.evals.util.results import SummaryResults, save_summary
+from skythought.evals.hf_models import HFLM
+
+from types import MethodType
+import tempfile
+from datetime import datetime
+import zipfile
+
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -110,7 +121,13 @@ def fetch_responses_ray(
     model_config: ModelConfig,
     sampling_params: SamplingParameters,
 ):
-    config = backend_args.get_ray_llm_config()
+    if 'shift' in model_config.model_id:
+        logger.info('Using shift model!')
+        config_name = 'ray_shift_config.yaml'
+    else:
+        config_name = 'ray_config.yaml'
+    
+    config = backend_args.get_ray_llm_config(config_name)
     config["model_id"] = model_config.model_id
 
     engine_cfg = init_engine_from_config(config)
@@ -146,6 +163,66 @@ def _parse_response_for_idx(
     }
     return response_entry, token_usage_for_response
 
+layer_activation = defaultdict(list)
+def factory(idx, model_id):
+    
+    def llama_forward(self, x):
+        gate_up, _ = self.gate_up_proj(x)  #  l, 2i
+        i = gate_up.size(-1)
+        gate_up[:, : i // 2] = torch.nn.SiLU()(gate_up[:, : i // 2])
+        activation = gate_up[:, : i // 2] #  l, i
+        if gate_up.shape[0] == 1:
+            layer_activation[idx].append(activation.cpu().float().detach())
+        x = gate_up[:, : i // 2] * gate_up[:, i // 2 :]
+        x, _ = self.down_proj(x)
+        return x
+    
+    def shift_llama_forward(self, x):
+        length = x.shape[0]
+        if length > 1:
+            self.last_x = x[-1, :].unsqueeze(0)
+            
+            x_shift = F.pad(x[:-1, :], (0, 0, 1, 0))
+        else:
+            cur_x = x
+            
+            x_shift = self.last_x
+            self.last_x = cur_x
+        
+        alpha = F.sigmoid(self.scale(torch.concat([x_shift, x_shift], dim=-1))[0])
+        
+        shift_gate = self.W(self.R(torch.concat([x_shift, x_shift], dim=-1))[0])[0] * alpha
+        
+        ori_gate = self.gate_proj(x)[0]
+        final_gate = ori_gate + shift_gate
+        
+        if length == 1:
+            layer_activation[idx].append(self.act_fn(final_gate).cpu().float().detach())
+            
+        up, _ = self.up_proj(x)
+        x = self.act_fn(final_gate) * up
+        x, _ = self.down_proj(x)
+        return x
+    
+    if 'shift' in model_id:
+        return shift_llama_forward
+    else:
+        return llama_forward
+
+def create_temp_pkl_name(model_id):
+    # 获取当前时间并格式化为字符串（例如：20240331_153022）
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 定义临时目录路径（例如：./tmp/）
+    temp_dir = "./tmp"
+    
+    # 确保临时目录存在，如果不存在则创建
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # 生成最终的 .pkl 文件路径（例如：./tmp/20240331_153022-model123.pkl）
+    temp_pkl_path = os.path.join(temp_dir, f"{timestamp}-{model_id.replace('/', '-')}.pkl")
+    
+    return temp_pkl_path
 
 def inference(
     conversations: List[ConversationType],
@@ -183,24 +260,76 @@ def inference(
         responses = [Response.from_openai_response(response) for response in responses]
     elif backend == Backend.VLLM:
         batch_size = kwargs.get("batch_size", 1)
+        assert batch_size == 1
+        
+        conversations = conversations[:200]
+        
         engine_kwargs = copy.deepcopy(backend_params.to_dict())
         engine_kwargs["model"] = model_config.model_id
-        llm = LLM(**engine_kwargs)
+        llm = LLM(enforce_eager=True, **engine_kwargs)
 
-        response_in_batches = [
-            llm.chat(
+        num_layers = llm.llm_engine.model_config.hf_config.num_hidden_layers
+        
+        zip_file_path = create_temp_pkl_name(model_config.model_id)
+        
+        for i in range(num_layers):
+            obj = llm.llm_engine.model_executor.driver_worker.worker.model_runner.model.model.layers[i].mlp
+            obj.forward = MethodType(factory(i, model_config.model_id), obj)
+        
+        response_in_batches = []
+        for i in range(0, len(conversations), batch_size):
+            
+            global layer_activation
+            layer_activation.clear()
+            
+            response_batch = llm.chat(
                 messages=conversations[i : i + batch_size],
                 sampling_params=sampling_params.params,
                 use_tqdm=True,
                 add_generation_prompt=model_config.assistant_prefill is None,
                 continue_final_message=model_config.assistant_prefill is not None,
-            )
-            for i in range(0, len(conversations), batch_size)
-        ]
+                )
+            layer_activation_changes = dict()
+            for layer in layer_activation:
+                activations = torch.stack(layer_activation[layer]).squeeze(1)
+                activations_norm = torch.norm(activations, p=2, dim=1)  # shape=(1024,)
+                
+                deltas = activations[1:] - activations[:-1]
+                
+                delta_norms = torch.norm(deltas, p=2, dim=1)  # shape=(1023,)
+                
+                z_delta = torch.norm(activations[0] - activations[-1], p=2)
+                
+                prev_norms = torch.norm(activations[:-1], p=2, dim=1)  # shape=(1023,)
+                relative_deltas = delta_norms / prev_norms  # shape=(1023,)
+                
+                cos_sims = F.cosine_similarity(activations[1:], activations[:-1], dim=1)
+                
+                z_cos_sim = F.cosine_similarity(activations[0].unsqueeze(0), activations[-1].unsqueeze(0), dim=-1)
+                
+                layer_activation_changes[layer] = {
+                    "activations_norm": activations_norm.cpu().float().detach().numpy(),
+                    "delta_norms": delta_norms.cpu().float().detach().numpy(),
+                    "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
+                    "cos_sims": cos_sims.cpu().float().detach().numpy(),
+                    "z_delta": z_delta.cpu().float().detach().numpy(),
+                    "z_cos_sim": z_cos_sim.cpu().float().detach().numpy(),
+                }
+                
+            with zipfile.ZipFile(zip_file_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
+                serialized_dict = pickle.dumps(layer_activation_changes)
+                zipf.writestr(str(i), serialized_dict)
+                            
+            response_in_batches.append(response_batch)
+            
         responses = []
         for response_batch in response_in_batches:
             responses.extend(response_batch)
         responses = [Response.from_vllm_response(response) for response in responses]
+        
+        for i, response in enumerate(responses):
+            response.activation_file = (zip_file_path, str(i))
+            
     else:
         raise ValueError(f"Invalid backend: {backend}")
 
@@ -285,6 +414,9 @@ def generate_responses_for_dataset(
         id_to_results[unique_id]["responses"] = response_entries
         id_to_results[unique_id]["token_usages"] = token_usages
 
+        if hasattr(response, 'activation_file'):
+            id_to_results[unique_id]['activation_file'] = response.activation_file
+            
         all_prompt_tokens.append(response.num_input_tokens)
         all_completion_tokens.append(sum_completion_tokens)
 
@@ -410,10 +542,12 @@ def generate_and_score(
         pass_at_k=pass_at_k_metrics,
     )
 
-    save_summary(summary_file, summary_data)
-    save_results(result_file, id_to_results)
-    logger.info(f"Saved results to {result_file}")
-    logger.info(f"Summary saved to {summary_file}")
+    rank = int(os.environ.get("RANK", 0))
+    if rank == 0:
+        save_summary(summary_file, summary_data)
+        save_results(result_file, id_to_results)
+        logger.info(f"Saved results to {result_file}")
+        logger.info(f"Summary saved to {summary_file}")
 
 
 def generate_and_save(

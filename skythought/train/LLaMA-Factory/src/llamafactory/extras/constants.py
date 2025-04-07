@@ -96,6 +96,8 @@ SUPPORTED_CLASS_FOR_BLOCK_DIAG_ATTN = {
 
 SUPPORTED_CLASS_FOR_S2ATTN = {"llama"}
 
+SUPPORTED_CLASS_FOR_shift_gate = {"qwen2"}
+
 VIDEO_PLACEHOLDER = os.environ.get("VIDEO_PLACEHOLDER", "<video>")
 
 V_HEAD_WEIGHTS_NAME = "value_head.bin"

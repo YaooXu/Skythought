@@ -125,6 +125,7 @@ def load_model(
     finetuning_args: "FinetuningArguments",
     is_trainable: bool = False,
     add_valuehead: bool = False,
+    without_peft=False
 ) -> "PreTrainedModel":
     r"""
     Loads pretrained model.
@@ -157,11 +158,19 @@ def load_model(
             if model_args.train_from_scratch:
                 model = load_class.from_config(config, trust_remote_code=True)
             else:
-                model = load_class.from_pretrained(**init_kwargs)
+                if model_args.shift_gate:
+                    logger.info_rank0("Using Qwen2ForCausalLM with shift_gate.")
+                    from ..custom_models.modeling_qwen2_shift_gate import Qwen2ForCausalLM
+                    model = Qwen2ForCausalLM.from_pretrained(**init_kwargs)
+                else:
+                    model = load_class.from_pretrained(**init_kwargs)
 
         if model_args.mixture_of_depths == "convert":
             model = convert_pretrained_model_to_mod(model, config, model_args)
 
+    if without_peft:
+        return model
+    
     if not lazy_load:
         patch_model(model, tokenizer, model_args, is_trainable, add_valuehead)
         register_autoclass(config, model, tokenizer)

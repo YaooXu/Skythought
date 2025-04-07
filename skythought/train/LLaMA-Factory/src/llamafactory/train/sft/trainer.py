@@ -31,6 +31,7 @@ from ...extras.packages import is_transformers_version_equal_to_4_46
 from ..callbacks import PissaConvertCallback, SaveProcessorCallback
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
 
+from torch.utils.data import DataLoader
 
 if TYPE_CHECKING:
     from torch.utils.data import Dataset
@@ -66,6 +67,60 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
 
+        if finetuning_args.finetuning_type == "lora-ga":
+            from peft import LoraGAConfig, get_peft_model
+            from peft.utils.lora_ga_utils import estimate_gradient, LoraGAContext, save_loraga_model_init
+            from llamafactory.model.model_utils.misc import find_all_linear_modules
+            
+            peft_config = LoraGAConfig(
+                target_modules=find_all_linear_modules(model=self.model, freeze_vision_tower=False),
+                r=self.finetuning_args.lora_rank,
+                lora_alpha=self.finetuning_args.lora_alpha,
+                iters=self.finetuning_args.lora_ga_iters,
+                bsz=self.args.per_device_train_batch_size,
+            )
+            named_grad = estimate_gradient(
+                model=self.model,
+                dataloader=DataLoader(
+                    self.train_dataset.select(range(peft_config.bsz * peft_config.iters)), 
+                    batch_size=peft_config.bsz,
+                    collate_fn=self.data_collator),
+                accelerator=self.accelerator,
+                quant_flag=False,
+            )
+            # from collections import defaultdict
+            # named_params = {name[:-7]: param for name, param in self.model.named_parameters() if name.endswith('.weight')}
+            # # 按名称分组
+            # grad_param_ratios = defaultdict(list)
+
+            # for key, grad in named_grad.items():
+            #     # 获取对应的参数
+            #     if key in named_params:
+            #         param = named_params[key]
+            #         # 计算梯度的 L2 范数
+            #         grad_norm = torch.norm(grad)
+            #         # 计算参数的 L2 范数
+            #         param_norm = torch.norm(param)
+            #         # 计算梯度范数除以参数范数
+            #         ratio = grad_norm / (param_norm + 1e-8)  # 避免除以零
+            #         # 添加到对应的组
+            #         grad_param_ratios[key].append(ratio)
+            #     else:
+            #         print(f"Warning: {key} not found in model parameters.")
+
+            # 计算每组的平均比值
+            avg_ratios = {key: torch.mean(torch.stack(ratios)) for key, ratios in grad_param_ratios.items()}
+
+            # 打印结果
+            for key, avg_ratio in avg_ratios.items():
+                print(f"{key} 的平均梯度范数/参数范数: {avg_ratio.item()}")
+
+            with LoraGAContext(model=self.model, named_grad=named_grad):
+                self.model = get_peft_model(model=self.model, peft_config=peft_config)
+
+            if self.accelerator.is_local_main_process:
+                save_loraga_model_init(model=self.model, save_dir=os.path.join(self.args.output_dir, "final_lora_ckpt"))
+                
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
         if self.optimizer is None:
@@ -167,3 +222,6 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         with open(output_prediction_file, "w", encoding="utf-8") as f:
             for text, pred, label in zip(decoded_inputs, decoded_preds, decoded_labels):
                 f.write(json.dumps({"prompt": text, "predict": pred, "label": label}, ensure_ascii=False) + "\n")
+
+    def on_step_end(self, args, state, control, **kwargs):
+        print(self)

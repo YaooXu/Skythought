@@ -84,6 +84,28 @@ class Response:
             num_input_tokens=len(response.prompt_token_ids),
         )
 
+    @classmethod
+    def from_hf_local_response(cls, response) -> "Response":
+        """
+        Factory method to create a Response instance from a HF_LOCAL response.
+
+        Args:
+            response: vLLM response object containing output text and token information
+
+        Returns:
+            Responses: New instance initialized with vLLM response data
+        """
+        response_texts = [
+            response['response_texts']
+        ]
+        num_completion_tokens = [
+            len(response['response_tokens'])
+        ]
+        return cls(
+            response=response_texts,
+            num_completion_tokens=num_completion_tokens,
+            num_input_tokens=len(response['prompt_token_ids']),
+        )
 
 @dataclass
 class SingleParsedResponse:

@@ -169,3 +169,9 @@ cython_debug/
 token_usage/
 
 run_all.sh
+
+saves*
+wandb
+huggingface_models
+skythought/configs
+skythought/tmp/*
