@@ -1,0 +1,13 @@
+### Note: DO NOT use quantized model or quantization_bit when merging lora adapters
+
+### model
+model_name_or_path: meta-llama/Meta-Llama-3-8B-Instruct
+adapter_name_or_path: saves/Open-Thoughts-16k-10k/Llama-3-8B-Instruct/lora-shift/checkpoint-936
+template: llama3
+finetuning_type: lora
+
+### export
+export_dir: saves/Open-Thoughts-16k-10k/Llama-3-8B-Instruct/lora-shift/checkpoint-936
+export_size: 2
+export_device: cpu
+export_legacy_format: false
