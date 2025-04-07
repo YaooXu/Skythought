@@ -30,7 +30,6 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 # 初始化一个列表来存储每个样本的 token 长度
 token_lengths = []
 
-# math_samples = random.sample(math_samples, 1_000)
 for sample in tqdm.tqdm(samples):
     # 拼接所有对话中的 value 内容
     combined_text = '\n'.join([conversation['value'] for conversation in sample['conversations']])

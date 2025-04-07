@@ -36,6 +36,40 @@
 
 # Getting Started
 
+```shell
+# prepare environment
+# 需要设置代理，不然flash_attn可能安装不成功
+# python3.10, cuda124, torch251, flash_attn274
+
+git clone https://github.com/YaooXu/Skythought
+cd SkyThought
+
+pip install -r requirements.txt
+pip install -e .
+
+git clone https://github.com/YaooXu/LoRA-GA
+cd LoRA-GA
+pip install -e peft
+
+cd ../skythought/train/LLaMA-Factory
+pip install -e .
+
+cd ./src/llamafactory/vllm_add_shift_models
+pip install -e .
+
+pip uninstall transformer-engine
+```
+
+```shell
+# prepare data
+
+python scripts/process_openthoughts_metadata.py
+
+cd skythought
+bash train_base.sh
+
+```
+
 We open source the code and scripts we used for data curation, training, and evaluation for Sky-T1-32B-Preview, you can find more details in each directory.
 - [`recipes`](./recipes/): Recipes - data curation steps and training strategies - for building our models `Sky-T1-32B-Flash`, `Sky-T1-32B-Preview` and `Sky-T1-7B` series. 
 - [`skythought/evals`](./skythought/evals/): Our data generation and evaluation library. 
@@ -47,10 +81,6 @@ We open source the code and scripts we used for data curation, training, and eva
 ## Usage
 
 You can install the latest release from PyPI or from [source](#installing-from-source):
-
-```shell
-pip install skythought
-```
 
 ### Installing from source
 

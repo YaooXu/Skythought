@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
 from transformers import AutoTokenizer
+from pathlib import Path
+
 
 ds = load_dataset("open-thoughts/OpenThoughts-114k", "default")['train']
 
@@ -21,13 +23,16 @@ token_lengths = []
 
 math_code_samples = []
 
+n_math, n_code = 0, 0
 for sample in tqdm.tqdm(ds):
     if sample['conversations'][0]['value'].startswith("Return your final response"):
         math_code_samples.append(sample)
+        n_math += 1
     elif sample['conversations'][0]['value'].startswith("Generate an executable Python function"):
         math_code_samples.append(sample)
+        n_code += 1
 
-print(len(math_code_samples))
+print(n_math, n_code)
 
 max_length = 16384
 
@@ -50,52 +55,11 @@ for sample in tqdm.tqdm(math_code_samples):
     if len(chosen_sample) == 20_000:
         break
 
-filename = "math_code_long_cot_samples-10k.json"
+filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_code_long_cot_samples-20k.json"
+
+Path(filename).parent.mkdir(parents=True, exist_ok=True)
+
 with open(filename, 'w', encoding='utf-8') as f:
     json.dump(math_code_samples, f, ensure_ascii=False, indent=4)
         
 print(len(chosen_sample))
-
-# # 定义范围
-# ranges = [
-#     # (0, 4000),  
-#     # (0, 8000),  
-#     # (0, 12000),
-#     # (0, 16000),
-# ]
-
-# sampled_datasets = {}
-# for range_start, range_end in ranges:
-#     # 筛选出符合当前范围的样本
-#     filtered_samples = [sample for sample in math_code_samples if range_start <= sample['token_length'] <= range_end]
-    
-#     # 随机采样 10,000 个样本（如果样本不足 10,000，则取全部）
-#     if len(filtered_samples) > 10000:
-#         sampled_samples = random.sample(filtered_samples, 10_000)
-#     else:
-#         sampled_samples = filtered_samples
-    
-#     # 保存采样结果
-#     sampled_datasets[f"{range_start}-{range_end}"] = sampled_samples
-
-# for range_name, samples in sampled_datasets.items():
-#     filename = f"samples_{range_name}.json"
-#     with open(filename, 'w', encoding='utf-8') as f:
-#         json.dump(samples, f, ensure_ascii=False, indent=4)
-#     print(f"范围 {range_name} 采样了 {len(samples)} 个样本")
-    
-# # 将 token 长度转换为 numpy 数组
-# token_lengths = np.array(token_lengths)
-
-# # 统计 token 长度的分布
-# plt.hist(token_lengths, bins=50, edgecolor='black')
-# plt.title('Token Length Distribution')
-# plt.xlabel('Token Length')
-# plt.ylabel('Frequency')
-# plt.savefig('tmp.png')
-
-# # 打印一些统计信息
-# print(f"Mean token length: {np.mean(token_lengths)}")
-# print(f"Median token length: {np.median(token_lengths)}")
-# print(f"Max token length: {np.max(token_lengths)}")
-# print(f"Min token length: {np.min(token_lengths)}")

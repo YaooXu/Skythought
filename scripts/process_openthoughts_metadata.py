@@ -10,8 +10,14 @@ import tqdm
 from transformers import AutoTokenizer
 
 import os
+import re
+from pathlib import Path
 
-os.environ['HF_DATASETS_OFFLINE'] = '1'
+def set_seed(seed):
+    random.seed(seed)         
+    np.random.seed(seed)      
+
+set_seed(42)
 
 def format_code_prompt(x):
     formatted_prompt = ""
@@ -64,7 +70,7 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 # 初始化一个列表来存储每个样本的 token 长度
 token_lengths = []
 
-sub_samples = ds.filter(lambda example: example['domain'] in ['math'])
+sub_samples = ds.filter(lambda example: example['domain'] in ['code', 'math'])
 
 print(len(sub_samples))
 
@@ -76,6 +82,8 @@ short_cot_samples = []
 max_length = 16384
 num_samples = 20_000
 
+n_code, n_math = 0, 0
+
 for sample in tqdm.tqdm(sub_samples):
     problem = sample['problem']
     
@@ -83,8 +91,13 @@ for sample in tqdm.tqdm(sub_samples):
         prompt = math_instruction + problem
         
     # code没有short cot
-    # elif sample['domain'] == 'code':
-    #     prompt = format_code_prompt(sample)
+    elif sample['domain'] == 'code':
+        pattern = r'(### Solution Code\n```.*```)'
+        match = re.search(pattern, sample['deepseek_solution'], re.DOTALL)
+        if not match:
+            continue
+        prompt = format_code_prompt(sample)
+        sample['ground_truth_solution'] = match.group(1)
         
     # long_cot_samples
     conversations = [
@@ -124,14 +137,23 @@ for sample in tqdm.tqdm(sub_samples):
         "conversations": conversations
     }
     
+    if short_cot_sample['conversations'][1]['value'].startswith('### Solution Code'):
+        n_code += 1
+    else:
+        n_math += 1
+        
     long_cot_samples.append(long_cot_sample)
     short_cot_samples.append(short_cot_sample)
     
     if len(long_cot_samples) >= num_samples:
         break
 
-long_cot_filename = "math_long_cot_samples-20k.json"
-short_cot_filename = "math_short_cot_samples-20k.json"
+print(n_code, n_math)
+
+long_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_code_long_cot_samples-20k.json"
+short_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_code_short_cot_samples-20k.json"
+
+Path(long_cot_filename).parent.mkdir(parents=True, exist_ok=True)
 
 with open(long_cot_filename, "w") as f:
     json.dump(long_cot_samples, f, indent=4)
