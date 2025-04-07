@@ -42,7 +42,7 @@
 # python3.10, cuda124, torch251, flash_attn274
 
 git clone https://github.com/YaooXu/Skythought
-cd SkyThought
+cd Skythought
 
 pip install -r requirements.txt
 pip install -e .
