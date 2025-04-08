@@ -45,7 +45,8 @@ for config_path in "${train_configs[@]}"; do
 
     config_name=$(basename "$config_path")
     output_path="$CHECKPOINT_SAVE/$config_name"
-
+    config_name="${config_name%.yaml}"
+    
     if [[ "$config_name" == *"lora"* ]]; then
     output_path="$output_path/complete_ckpt"
     fi
