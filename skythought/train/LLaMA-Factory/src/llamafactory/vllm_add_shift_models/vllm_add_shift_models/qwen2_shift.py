@@ -21,7 +21,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only Qwen2 model compatible with HuggingFace weights."""
-from typing import Iterable, List, Optional, Set, Tuple, Union
+from ast import Pass
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import torch
 from torch import nn
@@ -50,7 +51,7 @@ from vllm.model_executor.pooling_metadata import PoolingMetadata
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, PoolerOutput
 
-from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP
+from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP, HasInnerState
 from vllm.model_executor.models.utils import (AutoWeightsLoader, PPMissingLayer, WeightsMapper,
                     is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
@@ -59,7 +60,147 @@ from vllm.model_executor.models.utils import (AutoWeightsLoader, PPMissingLayer,
 import torch.nn.functional as F
 import os
 
+from transformers import PretrainedConfig
+
 logger = init_logger(__name__)
+
+class LastHiddenStateCacheManager:
+
+    def __init__(
+        self,
+        dtype: torch.dtype,
+        device: torch.device,
+        max_batch_size: int,
+        config: PretrainedConfig,
+    ):
+        self.device = device
+        self.hidden_size = config.hidden_size
+        last_kv_size = max_batch_size * 2
+        self.max_batch_size = max_batch_size
+        self.num_layers = config.num_hidden_layers
+
+        self.last_hidden_state_caches = []
+        
+        for _ in range(self.num_layers):
+            self.last_hidden_state_caches.append(
+                torch.zeros((last_kv_size, self.hidden_size), dtype=dtype, device=device)
+            )
+
+        self.cache_indices_mapping: Dict[str, int] = {}
+        self.free_cache_indices = list(range(max_batch_size))
+
+    def _release_finished_requests(self, finished_req_ids: List[str]):
+        for req_id in finished_req_ids:
+            if req_id in self.cache_indices_mapping:
+                index = self.cache_indices_mapping.pop(req_id)
+                self.free_cache_indices.append(index)
+
+    def _get_cache_indices(self, request_ids_to_seq_ids, finished_requests_ids):
+        self._release_finished_requests(finished_requests_ids)
+        indices = [0] * len(request_ids_to_seq_ids)
+        for i, (req_id, _) in enumerate(request_ids_to_seq_ids.items()):
+            if req_id in self.cache_indices_mapping:
+                indices[i] = self.cache_indices_mapping[req_id]
+            elif req_id in finished_requests_ids:
+                indices[i] = 0  # warmup
+            else:
+                assert len(self.free_cache_indices) > 0
+                index = self.free_cache_indices.pop()
+                self.cache_indices_mapping[req_id] = index
+                indices[i] = index
+        return indices
+
+    def get_last_hidden_states(self, request_ids_to_seq_ids, finished_requests_ids):
+        indices = self._get_cache_indices(request_ids_to_seq_ids, finished_requests_ids)
+        indices_tensor = torch.tensor(indices, dtype=torch.long, device=self.device)
+        
+        return self.last_hidden_state_caches, indices_tensor  # shape: [num_layers][B, H]
+
+    def update_last_hidden_states(self, hidden_states_by_layer, indices_tensor):
+        """
+        hidden_states_by_layer: list of tensors, each is [B, H]
+        indices_tensor: [B], indicating the slot to write
+        """
+        for layer_id, layer_tensor in enumerate(self.last_hidden_state_caches):
+            layer_tensor.index_copy_(0, indices_tensor, hidden_states_by_layer[layer_id])
+
+    def copy_inputs_before_cuda_graphs(self, input_buffers, **kwargs):
+        """
+        Copy the relevant state_indices into the CUDA graph input buffer.
+        This is used before graph replay to populate slot indices.
+        """
+        assert all(
+            key in kwargs
+            for key in ["request_ids_to_seq_ids", "finished_requests_ids"]
+        ), "CUDA Graph mode requires explicit cache index resolution."
+
+        request_ids_to_seq_ids = kwargs["request_ids_to_seq_ids"]
+        finished_requests_ids = kwargs["finished_requests_ids"]
+
+        assert "seqlen_agnostic_capture_inputs" in input_buffers
+        _, input_state_indices_buffer = input_buffers["seqlen_agnostic_capture_inputs"]
+
+        # 获取当前 batch 的缓存槽位索引
+        last_kv_indices = self._get_cache_indices(
+            request_ids_to_seq_ids, finished_requests_ids
+        )
+
+        # CUDA Graph buffer padding（补齐静态 shape）
+        cuda_graph_pad_len = input_state_indices_buffer.shape[0] - len(last_kv_indices)
+        last_kv_indices.extend(
+            list(range(self.max_batch_size, self.max_batch_size + cuda_graph_pad_len))
+        )
+
+        # 写入 capture buffer
+        input_state_indices_buffer.copy_(
+            torch.as_tensor(last_kv_indices, dtype=torch.int32, device=self.device)
+        )
+
+
+    def get_seqlen_agnostic_capture_inputs(self, batch_size: int):
+        """
+        Used during CUDA graph capture to provide static buffers:
+        - cache tensors: list of [max_batch_size, hidden_size] per layer
+        - state indices tensor: [batch_size]
+        """
+        state_indices_tensor = torch.as_tensor(
+            list(range(0, batch_size)), dtype=torch.int32, device=self.device
+        )
+        return (self.last_hidden_state_caches, state_indices_tensor)
+
+
+def get_prev_hidden_with_zero_start(
+    hidden_states: torch.Tensor,                # [T, D]
+    query_start_loc: torch.Tensor,              # [num_prefills + 1], int32
+) -> torch.Tensor:
+    """
+    构造 prev_hidden:
+    - 起始 token → 0 向量
+    - 其他 token → 前一个 token 的 hidden
+    """
+    device = hidden_states.device
+    num_prefill_tokens = query_start_loc[-1].item()
+    D = hidden_states.shape[1]
+
+    # 结果张量
+    prev_hidden = torch.zeros((num_prefill_tokens, D), dtype=hidden_states.dtype, device=device)
+
+    # 所有 token 索引
+    token_ids = torch.arange(num_prefill_tokens, device=device)
+
+    # 哪些是序列起始
+    is_start = torch.zeros(num_prefill_tokens, dtype=torch.bool, device=device)
+    is_start[query_start_loc[:-1]] = True
+
+    # 找出非起始 token
+    non_start_mask = ~is_start
+    non_start_indices = non_start_mask.nonzero(as_tuple=True)[0]
+    prev_indices = non_start_indices - 1
+
+    # 拷贝前一个 hidden
+    prev_hidden[non_start_indices] = hidden_states[prev_indices]
+
+    return prev_hidden  # shape: [num_prefill_tokens, D]
 
 
 class Qwen2MLP(nn.Module):
@@ -107,82 +248,6 @@ class Qwen2MLP(nn.Module):
     
         self.shift_version = os.environ.get('SHIFT_VERSION', '').split('-')[0]
 
-        if self.shift_version in ('v2.4', 'v2.5', 'v2.6', 'v2.7'):
-            n = 2 if self.shift_version == 'v2.6' else 1
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=True,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                n * hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v4.1', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=True,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-        
-        if self.shift_version in ('v4.1_nobias', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
         if self.shift_version in ('v4cat', ):
             self.R = RowParallelLinear(
                 2 * hidden_size,
@@ -203,6 +268,106 @@ class Qwen2MLP(nn.Module):
             self.scale = RowParallelLinear(
                 2 * hidden_size,
                 1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v4cat_scale',):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                intermediate_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                2 * hidden_size,
+                1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v4sub', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=True,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                intermediate_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v4pre', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                intermediate_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v4pre_glu', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                intermediate_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                rank,
                 bias=False,
                 quant_config=quant_config,
                 prefix=f"{prefix}.shift_weight",
@@ -212,7 +377,7 @@ class Qwen2MLP(nn.Module):
             self.R = RowParallelLinear(
                 2 * hidden_size,
                 rank,
-                bias=True,
+                bias=False,
                 quant_config=quant_config,
                 prefix=f"{prefix}.shift_weight",
             )
@@ -233,6 +398,231 @@ class Qwen2MLP(nn.Module):
                 prefix=f"{prefix}.shift_weight",
             )
 
+        if self.shift_version in ('v2cat_scale', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                2 * hidden_size,
+                1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v2cat_scale_glu_relu', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                2 * hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+            
+        if self.shift_version in ('v2cat_glu', 'v2cat_glu_silu'):
+            self.R = RowParallelLinear(
+                2 * hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                2 * hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v2sub', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=True,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v2pre', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                1,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v2pre_sae', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=True,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v2pre_glu', 'v2pre_glu_silu'):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version in ('v2pre_glu_bias', ):
+            self.R = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=True,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+                
+            self.W = RowParallelLinear(
+                rank,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+            self.scale = RowParallelLinear(
+                hidden_size,
+                rank,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.shift_weight",
+            )
+
+        if self.shift_version == "v2cat":
+            self.get_final_gate = self.get_final_gate_v2cat
+        elif self.shift_version == "v2cat_scale":
+            self.get_final_gate = self.get_final_gate_v2cat_scale
+        elif self.shift_version == "v2cat_scale_glu_relu":
+            self.get_final_gate = self.get_final_gate_v2cat_scale_glu_relu
+        elif self.shift_version == "v2cat_glu":
+            self.get_final_gate = self.get_final_gate_v2cat_glu
+        elif self.shift_version == "v2cat_glu_silu":
+            self.get_final_gate = self.get_final_gate_v2cat_glu_silu
+        elif self.shift_version == "v4cat":
+            self.get_final_gate = self.get_final_gate_v4cat
+        elif self.shift_version == "v2sub":
+            self.get_final_gate = self.get_final_gate_v2sub
+        elif self.shift_version == "v4sub":
+            self.get_final_gate = self.get_final_gate_v4sub
+        elif self.shift_version == "v2pre":
+            self.get_final_gate = self.get_final_gate_v2pre
+        elif self.shift_version == "v2pre_sae":
+            self.get_final_gate = self.get_final_gate_v2pre_sae
+        elif self.shift_version in ("v2pre_glu", 'v2pre_glu_bias'):
+            self.get_final_gate = self.get_final_gate_v2pre_glu
+        elif self.shift_version in ("v2pre_glu_silu",):
+            self.get_final_gate = self.get_final_gate_v2pre_glu_silu
+        elif self.shift_version == "v4pre_glu":
+            self.get_final_gate = self.get_final_gate_v4pre_glu
+        elif self.shift_version == "v4pre":
+            self.get_final_gate = self.get_final_gate_v4pre
+        elif self.shift_version in ('v4cat_scale', ):
+            self.get_final_gate = self.get_final_gate_v4cat_scale
+        else:
+            raise NotImplementedError
+
         if hidden_act != "silu":
             raise ValueError(f"Unsupported activation: {hidden_act}. "
                              "Only silu is supported for now.")
@@ -240,148 +630,139 @@ class Qwen2MLP(nn.Module):
 
         self.last_x = None
         self.prefix = prefix
+
+    def get_final_gate_v4cat(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        shift_gate = self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])[0] * alpha
+        ori_gate = self.gate_proj(hidden_states)[0]
+        return ori_gate + shift_gate
+
+    def get_final_gate_v4cat_scale(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        shift_gate = self.W(self.R(prev_hidden_states)[0])[0] * alpha
+        ori_gate = self.gate_proj(hidden_states)[0]
+        return ori_gate + shift_gate
+
+    def get_final_gate_v2cat(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])[0] * alpha
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2cat_scale(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
+        alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2cat_glu(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2cat_glu_silu(self, hidden_states, prev_hidden_states):
+        alpha = self.act_fn(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v4sub(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(hidden_states - prev_hidden_states)[0])
+        shift_gate = self.W(self.R(hidden_states - prev_hidden_states)[0])[0] * alpha
+        ori_gate = self.gate_proj(hidden_states)[0]
+        return ori_gate + shift_gate
+
+    def get_final_gate_v2sub(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(hidden_states - prev_hidden_states)[0])
+        conv_hidden_states = hidden_states + self.W(self.R(hidden_states - prev_hidden_states)[0])[0] * alpha
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v4pre(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
+        shift_gate = self.W(self.R(prev_hidden_states)[0])[0] * alpha
+        ori_gate = self.gate_proj(hidden_states)[0]
+        return ori_gate + shift_gate
+
+    def get_final_gate_v4pre_glu(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
+        shift_gate = self.W(self.R(prev_hidden_states)[0] * alpha )[0]
+        ori_gate = self.gate_proj(hidden_states)[0]
+        return ori_gate + shift_gate
+
+    def get_final_gate_v2pre(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2pre_glu(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2pre_glu_silu(self, hidden_states, prev_hidden_states):
+        alpha = self.act_fn(self.scale(prev_hidden_states)[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+
+    def get_final_gate_v2pre_sae(self, hidden_states, prev_hidden_states):
+        conv_hidden_states = hidden_states + self.W(self.act_fn(self.R(prev_hidden_states)[0]))[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def forward(self, hidden_states, attn_metadata, last_kv_cache, last_kv_indices):
+        """
+        hidden_states: [T, D], 通常为 flattened batch
+        last_kv_cache: 缓存每个 request 上一个 token 的 hidden
+        last_kv_indices: 当前 batch 中每个 request 对应的缓存 index
+        attn_metadata: 提供 query_start_loc 区分 prefill/decode
+        """
         
-    def forward(self, x):
-        length = x.shape[0]
-        if length > 1:
-            self.last_x = x[-1, :].unsqueeze(0)
-            
-            x_shift = F.pad(x[:-1, :], (0, 0, 1, 0))
-        else:
-            cur_x = x
-            
-            x_shift = self.last_x
-            self.last_x = cur_x
+        T, D = hidden_states.shape
+        input_states = hidden_states.clone()
 
-        if self.shift_version in ('v4.1', 'v4.1_nobias'):
-            alpha = F.sigmoid(self.scale(x - x_shift)[0])
-            
-            shift_gate = self.W(self.R(x_shift)[0])[0] * alpha
-            
-            ori_gate = self.gate_proj(x)[0]
-            final_gate = ori_gate + shift_gate
+        num_prefills = attn_metadata.num_prefills
+        num_prefill_tokens = attn_metadata.num_prefill_tokens
 
-        if self.shift_version in ('v4cat', ):
-            alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-            
-            shift_gate = self.W(self.R(torch.concat([x_shift, x], dim=-1))[0])[0] * alpha
-            
-            ori_gate = self.gate_proj(x)[0]
-            final_gate = ori_gate + shift_gate
+        # ==== Prefill阶段处理 ====
+        if num_prefills > 0:
+            assert attn_metadata.query_start_loc is not None
+            query_start_loc = attn_metadata.query_start_loc[:num_prefills + 1]
 
-        elif self.shift_version in ('v2cat', ):
-            alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
+            prev_hidden_states = get_prev_hidden_with_zero_start(hidden_states, query_start_loc)
             
-            conv_x = x + self.W(self.R(torch.concat([x_shift, x], dim=-1))[0])[0] * alpha
+            # 存储每个 sequence 的最后一个 token hidden
+            from_indices = query_start_loc[1:] - 1
+            to_indices = last_kv_indices[:num_prefills]
+            last_kv_cache[to_indices] = hidden_states[from_indices]
             
-            final_gate = self.gate_proj(conv_x)[0]
+        # ==== Decode阶段处理 ====
+        if attn_metadata.num_decode_tokens > 0:
+            decode_hidden = hidden_states[num_prefill_tokens:].clone()
+            last_token_indices = last_kv_indices[num_prefills:]  # shape [B_decode]
+            prev_hidden_states = last_kv_cache[last_token_indices]
 
-        elif self.shift_version in ('v2.5', ):
-            alpha = F.sigmoid(self.scale(x_shift)[0])
-            
-            conv_x = x + self.W(self.R(x_shift)[0])[0] * alpha
-            
-            final_gate = self.gate_proj(conv_x)[0]
+            last_kv_cache[last_token_indices] = decode_hidden
 
-        elif self.shift_version in ('v2.6', ):
-            alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-            
-            conv_x = x + self.W(self.R(x_shift)[0])[0] * alpha
-            
-            final_gate = self.gate_proj(conv_x)[0]
-
-        elif self.shift_version in ('v2.7', ):
-            alpha = F.sigmoid(self.scale(x - x_shift)[0])
-            
-            conv_x = x + self.W(self.R(x - x_shift)[0])[0] * alpha
-            
-            final_gate = self.gate_proj(conv_x)[0]
-
-        # if os.environ['SHIFT_VERSION'].startswith(('v4.0',)):
-        #     alpha = F.sigmoid(self.scale(x_shift)[0])
-            
-        #     shift_gate = self.W(self.R(x_shift)[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-
-        # if os.environ['SHIFT_VERSION'].startswith(('v2.4',)):
-        #     alpha = F.sigmoid(self.scale(x - x_shift)[0])
-            
-        #     conv_x = x + self.W(self.R(x_shift)[0])[0] * alpha
-            
-        #     final_gate = self.gate_proj(conv_x)[0]
-
-        # if os.environ['SHIFT_VERSION'].startswith(('v3.6',)):
-        #     alpha = F.sigmoid(self.scale(x)[0])
-            
-        #     shift_gate = self.W(self.R(x_shift)[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-
-        # if os.environ['SHIFT_VERSION'] == 'v3.5':
-        #     alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-            
-        #     shift_gate = self.W(self.R(torch.concat([x_shift, x], dim=-1))[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-
-        # if os.environ['SHIFT_VERSION'] == 'v3.5-sub':
-        #     alpha = F.sigmoid(self.scale(x - x_shift)[0])
-            
-        #     shift_gate = self.W(self.R(x - x_shift)[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-
-        # if os.environ['SHIFT_VERSION'] == 'v3.5-hi-1':
-        #     alpha = F.sigmoid(self.scale(x_shift)[0])
-            
-        #     shift_gate = self.W(self.R(x_shift)[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-            
-        # if os.environ['SHIFT_VERSION'] == 'v3.5':
-        #     alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-            
-        #     shift_gate = self.W(self.R(torch.concat([x_shift, x], dim=-1))[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-                       
-        # if os.environ['SHIFT_VERSION'] == 'v3.5-abl1':
-        #     alpha = F.sigmoid(self.scale(torch.concat([x, x], dim=-1))[0])
-            
-        #     shift_gate = self.W(self.R(torch.concat([x, x], dim=-1))[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-
-        # if os.environ['SHIFT_VERSION'] == 'v3.5-abl2':
-        #     alpha = F.sigmoid(self.scale(torch.concat([x_shift, x_shift], dim=-1))[0])
-            
-        #     shift_gate = self.W(self.R(torch.concat([x_shift, x_shift], dim=-1))[0])[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
+        final_gate = self.get_final_gate(hidden_states, prev_hidden_states)
         
-        # if os.environ['SHIFT_VERSION'] == 'v3.7':
-        #     alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-        #     conv_h = self.W(self.R(torch.concat([x_shift, x], dim=-1))[0])[0]
-        #     shift_gate = self.gate_proj(conv_h)[0] * alpha
-            
-        #     ori_gate = self.gate_proj(x)[0]
-        #     final_gate = ori_gate + shift_gate
-                    
-        up, _ = self.up_proj(x)
-        x = self.act_fn(final_gate) * up
-        x, _ = self.down_proj(x)
+        up, _ = self.up_proj(hidden_states)
+        hidden_states = self.act_fn(final_gate) * up
+        hidden_states, _ = self.down_proj(hidden_states)
         
-        return x
-
+        return hidden_states
+    
 
 class Qwen2Attention(nn.Module):
 
@@ -521,6 +902,8 @@ class Qwen2DecoderLayer(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
+        last_kv_cache: Optional[torch.Tensor],
+        last_kv_indices: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Self Attention
         if residual is None:
@@ -539,7 +922,13 @@ class Qwen2DecoderLayer(nn.Module):
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
+        
+        # changed
+        hidden_states = self.mlp(hidden_states, 
+            attn_metadata=attn_metadata,
+            last_kv_cache=last_kv_cache,
+            last_kv_indices=last_kv_indices
+        )
         return hidden_states, residual
 
 
@@ -578,6 +967,13 @@ class Qwen2Model(nn.Module):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
+        ## added
+        self.model_config = vllm_config.model_config
+        self.max_num_seqs = vllm_config.scheduler_config.max_num_seqs
+        self.config = config
+        self.padding_idx = config.pad_token_id
+        self.vocab_size = config.vocab_size
+
         if get_pp_group().is_first_rank or (config.tie_word_embeddings
                                             and get_pp_group().is_last_rank):
             self.embed_tokens = VocabParallelEmbedding(
@@ -606,6 +1002,8 @@ class Qwen2Model(nn.Module):
         else:
             self.norm = PPMissingLayer()
 
+        self.last_kv_cache_manager: Optional[LastHiddenStateCacheManager] = None
+        
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
@@ -617,7 +1015,27 @@ class Qwen2Model(nn.Module):
         attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Union[torch.Tensor, IntermediateTensors]:
+        if self.last_kv_cache_manager is None:
+            self.last_kv_cache_manager = LastHiddenStateCacheManager(
+                self.model_config.dtype,
+                input_ids.device,
+                self.max_num_seqs,
+                self.config,
+            )
+        #Ensure kwargs have request_ids_to_seq_ids and finished_requests_ids.
+        if "seqlen_agnostic_capture_inputs" not in kwargs:
+            request_ids_to_seq_ids = kwargs["request_ids_to_seq_ids"]
+            finished_requests_ids = kwargs["finished_requests_ids"]
+            last_kv_caches, last_kv_indices = self.last_kv_cache_manager.get_last_hidden_states(  # noqa: E501
+                request_ids_to_seq_ids,
+                finished_requests_ids,
+            )
+        else:
+            last_kv_caches, last_kv_indices = kwargs[
+                "seqlen_agnostic_capture_inputs"]
+            
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
@@ -636,6 +1054,8 @@ class Qwen2Model(nn.Module):
                 kv_caches[i - self.start_layer],
                 attn_metadata,
                 residual,
+                last_kv_caches[i],
+                last_kv_indices,
             )
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
@@ -702,7 +1122,7 @@ class Qwen2Model(nn.Module):
         return loaded_params
 
 
-class ShiftQwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
+class ShiftQwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP, HasInnerState):
     packed_modules_mapping = {
         "qkv_proj": [
             "q_proj",
@@ -767,10 +1187,12 @@ class ShiftQwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        **kwargs
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(input_ids, positions, kv_caches,
                                    attn_metadata, intermediate_tensors,
-                                   inputs_embeds)
+                                   inputs_embeds, 
+                                   **kwargs)
         return hidden_states
 
     def compute_logits(
@@ -799,7 +1221,14 @@ class ShiftQwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         )
         return loader.load_weights(weights)
 
+    def copy_inputs_before_cuda_graphs(self, input_buffers, **kwargs):
+        return self.model.last_kv_cache_manager.copy_inputs_before_cuda_graphs(
+            input_buffers, **kwargs)
 
+    def get_seqlen_agnostic_capture_inputs(self, batch_size: int):
+        return self.model.last_kv_cache_manager.get_seqlen_agnostic_capture_inputs(  # noqa: E501
+            batch_size)
+        
 class Qwen2EmbeddingModel(nn.Module, SupportsLoRA, SupportsPP):
     packed_modules_mapping = {
         "qkv_proj": [

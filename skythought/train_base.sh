@@ -19,52 +19,67 @@ num_replicas=8
 export CHECKPOINT_SAVE='./save'
 
 # Evaluation tasks
+# tasks=(
+#     "gsm8k|4"
+#     "math500|4"
+#     "olympiadbench_math_en|4"
+#     # "livecodebench|3"
+#     "aime24|16"
+#     "amc23|16"
+# )
+
 tasks=(
-    gsm8k
-    math500
-    olympiadbench_math_en
-    aime24
-    amc23
-    livecodebench
+    # "gsm8k|1"
+    # "math500|1"
+    # "olympiadbench_math_en|1"
+    # "livecodebench|3"
+    "aime24|128"
+    # "amc23|1"
 )
 
 train_configs=(
-    "configs/train_lora/qwen2-7b_lora_sft_math_code_short_cot_20k-32.yaml"
-    "configs/train_lora/qwen2-7b_lora_sft_math_code_short_cot_20k-64.yaml"
-    "configs/train_lora/qwen2-7b_lora_sft_math_code_short_cot_20k-128.yaml"
-    "configs/train_full/qwen2-7b_full_sft_math_code_short_cot.yaml"
-
-    "configs/train_lora/qwen2-7b_lora_sft_math_code_long_cot_20k-32.yaml"
-    "configs/train_lora/qwen2-7b_lora_sft_math_code_long_cot_20k-64.yaml"
-    "configs/train_lora/qwen2-7b_lora_sft_math_code_long_cot_20k-128.yaml"
-    "configs/train_full/qwen2-7b_full_sft_math_code_long_cot.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-32.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-64.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-128.yaml"
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_20k.yaml"
+    
+    # "configs/train_lora/qwen2-7b_lora_sft_math_short_cot_20k-32.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_short_cot_20k-64.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_short_cot_20k-128.yaml"
+    # "configs/train_full/qwen2-7b_full_sft_math_short_cot_20k.yaml"
 )
 
 for config_path in "${train_configs[@]}"; do
     echo "Training with config: $config_path"
 
     config_name=$(basename "$config_path")
-    output_path="$CHECKPOINT_SAVE/$config_name"
     config_name="${config_name%.yaml}"
+    output_path="$CHECKPOINT_SAVE/$config_name"
     
     if [[ "$config_name" == *"lora"* ]]; then
-    output_path="$output_path/complete_ckpt"
+        output_path="$output_path/complete_ckpt"
     fi
 
     echo "Output will be saved to: $output_path"
     
-    FORCE_TORCHRUN=1 NNODES=1 NODE_RANK=0 MASTER_PORT=29503 llamafactory-cli train "$config_path"
+    # FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
 
     # Run evaluation
-    for task in "${tasks[@]}"; do
-        echo "Evaluating model: $output_path on task: $task"
+    for task_str in "${tasks[@]}"; do
+
+        IFS='|' read -r task_name n <<< "$task_str"
+
+        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
         skythought evaluate \
             --model "$output_path" \
             --system-prompt-name skythought \
-            --task "$task" \
+            --task "$task_name" \
             --backend ray \
             --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-            --sampling-params temperature=0.7,max_tokens=16384 \
-            --result-dir "./evaluate_results/math-code-long-cot-20k/$task"
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+            --n=$n \
+            --result-dir "./evaluate_results-temp0.6-tp95-n128/math-long-cot-20k/$task_name"
     done
+
 done

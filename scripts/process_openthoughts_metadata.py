@@ -38,25 +38,7 @@ def format_code_prompt(x):
     return formatted_prompt
 
 
-system_prompt = "Your role as an assistant involves thoroughly exploring questions through a systematic long \
-        thinking process before providing the final precise and accurate solutions. This requires \
-        engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, \
-        backtracing, and iteration to develop well-considered thinking process. \
-        Please structure your response into two main sections: Thought and Solution. \
-        In the Thought section, detail your reasoning process using the specified format: \
-        <|begin_of_thought|> {thought with steps separated with '\n\n'} \
-        <|end_of_thought|> \
-        Each step should include detailed considerations such as analisying questions, summarizing \
-        relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining \
-        any errors, and revisiting previous steps. \
-        In the Solution section, based on various attempts, explorations, and reflections from the Thought \
-        section, systematically present the final solution that you deem correct. The solution should \
-        remain a logical, accurate, concise expression style and detail necessary step needed to reach the \
-        conclusion, formatted as follows: \
-        <|begin_of_solution|> \
-        {final formatted, precise, and clear solution} \
-        <|end_of_solution|> \
-        Now, try to solve the following question through the above guidelines:"
+system_prompt = "Your role as an assistant involves thoroughly exploring questions through a systematic long thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution. In the Thought section, detail your reasoning process using the specified format: <|begin_of_thought|> {thought with steps separated with '\\n\\n'} <|end_of_thought|> Each step should include detailed considerations such as analisying questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The solution should remain a logical, accurate, concise expression style and detail necessary step needed to reach the conclusion, formatted as follows: <|begin_of_solution|> {final formatted, precise, and clear solution} <|end_of_solution|> Now, try to solve the following question through the above guidelines:"
 
 math_instruction = "Return your final response within \\boxed{}. "
 
@@ -70,7 +52,7 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 # 初始化一个列表来存储每个样本的 token 长度
 token_lengths = []
 
-sub_samples = ds.filter(lambda example: example['domain'] in ['code', 'math'])
+sub_samples = ds.filter(lambda example: example['domain'] in ['math'])
 
 print(len(sub_samples))
 
@@ -90,14 +72,14 @@ for sample in tqdm.tqdm(sub_samples):
     if sample['domain'] == 'math':
         prompt = math_instruction + problem
         
-    # code没有short cot
-    elif sample['domain'] == 'code':
-        pattern = r'(### Solution Code\n```.*```)'
-        match = re.search(pattern, sample['deepseek_solution'], re.DOTALL)
-        if not match:
-            continue
-        prompt = format_code_prompt(sample)
-        sample['ground_truth_solution'] = match.group(1)
+    # # code没有short cot
+    # elif sample['domain'] == 'code':
+    #     pattern = r'(### Solution Code\n```.*```)'
+    #     match = re.search(pattern, sample['deepseek_solution'], re.DOTALL)
+    #     if not match:
+    #         continue
+    #     prompt = format_code_prompt(sample)
+    #     sample['ground_truth_solution'] = match.group(1)
         
     # long_cot_samples
     conversations = [
@@ -115,10 +97,14 @@ for sample in tqdm.tqdm(sub_samples):
         "conversations": conversations
     }
     
-    encoded = tokenizer(conversations[-1]['value'], return_tensors='pt', truncation=True, padding=True)
+    combined_text = conversations[0]['value'] + conversations[-1]['value']
+    # 对拼接后的文本进行编码
+    encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
     # 获取 token 长度
     token_length = encoded['input_ids'].shape[1]
-    if token_length > max_length:
+    # 获取 token 长度
+
+    if token_length + 32 > max_length:
         continue
         
     # short_cot_samples
@@ -150,8 +136,8 @@ for sample in tqdm.tqdm(sub_samples):
 
 print(n_code, n_math)
 
-long_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_code_long_cot_samples-20k.json"
-short_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_code_short_cot_samples-20k.json"
+long_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_long_cot_samples-20k.json"
+short_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_short_cot_samples-20k.json"
 
 Path(long_cot_filename).parent.mkdir(parents=True, exist_ok=True)
 

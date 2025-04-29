@@ -13,6 +13,7 @@ class SummaryResults:
     avg_prompt_tokens: float = 0
     accuracy: float = 0.0
     pass_at_k: Optional[Dict[str, float]] = None
+    mean = None
 
     def to_json_dict(self) -> Dict[str, Any]:
         """Convert to a JSON-compatible dictionary."""

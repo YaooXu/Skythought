@@ -251,19 +251,23 @@ def run_sft(
         if trainer.is_world_process_zero() and finetuning_args.plot_loss:
             plot_loss(training_args.output_dir, keys=["loss", "eval_loss", "eval_accuracy"])
 
-    if trainer.accelerator.is_local_main_process and finetuning_args.finetuning_type.startswith("lora"):
-        if finetuning_args.finetuning_type == "lora-ga":
-            from peft.utils.lora_ga_utils import save_loraga_model_final
-            peft_dir = os.path.join(trainer.args.output_dir, "final_lora_ckpt")
-            model = trainer.accelerator.unwrap_model(trainer.model)
-            save_loraga_model_final(model, save_dir=peft_dir)
-        else:
-            peft_dir = os.path.join(trainer.args.output_dir, f"{'checkpoint'}-{trainer.state.global_step}")
-        
-        new_model = load_model(tokenizer, model_args, finetuning_args, is_trainable=False, without_peft=True)
-        new_model = PeftModel.from_pretrained(new_model, peft_dir)
-        
-        if trainer.accelerator.is_local_main_process:
+    if trainer.accelerator.is_local_main_process:
+        if finetuning_args.finetuning_type.startswith("lora"):
+            if finetuning_args.finetuning_type == "lora-ga":
+                from peft.utils.lora_ga_utils import save_loraga_model_final
+                peft_dir = os.path.join(trainer.args.output_dir, "final_lora_ckpt")
+                model = trainer.accelerator.unwrap_model(trainer.model)
+                save_loraga_model_final(model, save_dir=peft_dir)
+            else:
+                peft_dir = os.path.join(trainer.args.output_dir, f"{'checkpoint'}-{trainer.state.global_step}")
+            
+            del model
+            
+            new_model = load_model(tokenizer, model_args, finetuning_args, is_trainable=False, load_bare_model=True)
+            new_model = PeftModel.from_pretrained(new_model, peft_dir)
+            
+            print(new_model.device)
+            print('merging')
             new_model = new_model.merge_and_unload()
             
             if model_args.infer_dtype == "auto":
@@ -271,21 +275,25 @@ def run_sft(
             else:
                 output_dtype = getattr(torch, model_args.infer_dtype)
 
+            print(output_dtype)
             setattr(new_model.config, "torch_dtype", output_dtype)
             new_model = new_model.to(output_dtype)
-            
+                            
             final_dir = os.path.join(trainer.args.output_dir, "complete_ckpt")
-                                    
+            
             new_model.save_pretrained(final_dir, max_shard_size='4GB', safe_serialization=True)
             tokenizer.save_pretrained(final_dir)
+
+        else:
+            final_dir = trainer.args.output_dir
             
-            if model_args.shift_gate:
-                config_path = os.path.join(final_dir, 'config.json')
-                with open(config_path, 'r', encoding='utf-8') as file:
-                    config = json.load(file)
-                config['architectures'][0] = 'Shift' + config['architectures'][0]
-                with open(config_path, 'w', encoding='utf-8') as file:
-                    json.dump(config, file, indent=4)
+        if model_args.shift_gate:
+            config_path = os.path.join(final_dir, 'config.json')
+            with open(config_path, 'r', encoding='utf-8') as file:
+                config = json.load(file)
+            config['architectures'][0] = 'Shift' + config['architectures'][0]
+            with open(config_path, 'w', encoding='utf-8') as file:
+                json.dump(config, file, indent=4)
         
     if training_args.predict_with_generate:
         tokenizer.padding_side = "left"  # use left-padding in generation

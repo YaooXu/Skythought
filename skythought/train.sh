@@ -1,6 +1,7 @@
-source /root/miniconda3/bin/activate /root/miniconda3/envs/skythought
+# source /root/miniconda3/bin/activate /root/miniconda3/envs/skythought
 
-export HF_HOME=/global_data/pretrain/xuyao/.cache/huggingface
+# export HF_HOME=/global_data/pretrain/xuyao/.cache/huggingface
+
 export WANDB_API_KEY=efe05a42b8b37cb8028408410c02bcefbddf42c0
 export TRANSFORMERS_OFFLINE=0
 export HF_DATASETS_OFFLINE=0
@@ -14,53 +15,158 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 num_replicas=8
 
-export SHIFT_RANK=128
+# export CUDA_VISIBLE_DEVICES=0,1,2,3
+# num_replicas=4
+
+
+export SHIFT_RANK=64
+
+
+export CHECKPOINT_SAVE='./save'
 
 shift_versions=(
-    # "v3.5"
-    # "v3.5-sub"
-    "v3.5-hi-1"
+    v2cat_scale_glu_relu
 )
 
 # Evaluation tasks
 tasks=(
-    gsm8k
-    math500
-    olympiadbench_math_en
-    aime24
-    amc23
-    livecodebench
+    "gsm8k|4"
+    "math500|4"
+    "olympiadbench_math_en|4"
+    # "livecodebench|3"
+    "aime24|16"
+    "amc23|16"
 )
 
-# Run training and evaluation for each version
-for version in "${shift_versions[@]}"; do
-    export SHIFT_VERSION="$version"
-    
-    echo $SHIFT_VERSION
-    # Training configurations with their corresponding output paths
-    train_configs=(
-        # "configs/train_lora/qwen2-7b_lora_sft-math-code-long_cot-64-shift_gate.yaml|saves/Bespoke-Stratos-17k/Qwen2.5-7B-Instruct/lora-64-shift_gate/$SHIFT_VERSION/complete_ckpt"
-        "configs/train_lora/qwen2-7b_lora_sft-math-code-long_cot-128-shift_gate.yaml|saves/Bespoke-Stratos-17k/Qwen2.5-7B-Instruct/lora-128-shift_gate/$SHIFT_VERSION/complete_ckpt"
-    )
-    
-    for config_pair in "${train_configs[@]}"; do
-        IFS='|' read -r config_path output_path <<< "$config_pair"
-        echo "Training with config: $config_path"
-        echo "Output will be saved to: $output_path"
-        
-        FORCE_TORCHRUN=1 NNODES=1 NODE_RANK=0 MASTER_PORT=29503 llamafactory-cli train "$config_path"
-    
-        # Run evaluation
-        for task in "${tasks[@]}"; do
-            echo "Evaluating model: $output_path on task: $task"
+# 每个 config 用 “路径|rank” 的形式写
+train_configs=(
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_20k-shift_gate.yaml|128"
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_20k-shift_gate.yaml|256"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-64-shift_gate.yaml|64"
+)
+
+# 遍历每个配置
+for config_item in "${train_configs[@]}"; do
+    # 分割 config_path 和 rank
+    IFS='|' read -r config_path rank <<< "$config_item"
+
+    echo "Training with config: $config_path (rank=$rank)"
+
+    config_name=$(basename "$config_path")
+    config_name="${config_name%.yaml}"
+
+    for version in "${shift_versions[@]}"; do
+        export SHIFT_VERSION="${version}-${rank}"
+
+        echo "Current SHIFT_VERSION: $SHIFT_VERSION"
+
+        # 构建输出路径
+        output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
+        if [[ "$config_name" == *"lora"* ]]; then
+            output_path="$output_path/complete_ckpt"
+        fi
+
+        # 可选：执行训练
+        FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+
+        # 执行评估
+        for task_str in "${tasks[@]}"; do
+            IFS='|' read -r task_name n <<< "$task_str"
+
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
             skythought evaluate \
                 --model "$output_path" \
                 --system-prompt-name skythought \
-                --task "$task" \
+                --task "$task_name" \
                 --backend ray \
                 --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-                --result-dir "./evaluate_results/Bespoke-Stratos-17k/$task"
+                --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+                --n=$n \
+                --result-dir "./evaluate_results-temp0.6-tp95/math-long-cot-20k/$task_name"
         done
+
+        skythought evaluate \
+            --model "$output_path" \
+            --system-prompt-name skythought \
+            --task aime24 \
+            --backend ray \
+            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+            --n=128 \
+            --result-dir "./evaluate_results-temp0.6-tp95-n128/math-long-cot-20k/aime24"
+
     done
 done
+
+
+
+
+# shift_versions=(
+#     # v2cat
+#     v2cat_scale
+#     # v4cat
+#     v4cat_scale
+# )
+
+# # Evaluation tasks
+# tasks=(
+#     # "gsm8k|1"
+#     # "math500|1"
+#     # "olympiadbench_math_en|1"
+#     # "livecodebench|3"
+#     "aime24|128"
+#     # "amc23|1"
+# )
+
+# # 每个 config 用 “路径|rank” 的形式写
+# train_configs=(
+#     "configs/train_full/qwen2-7b_full_sft_math_long_cot_20k-shift_gate.yaml|256"
+#     # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-64-shift_gate.yaml|64"
+# )
+
+# # 遍历每个配置
+# for config_item in "${train_configs[@]}"; do
+#     # 分割 config_path 和 rank
+#     IFS='|' read -r config_path rank <<< "$config_item"
+
+#     echo "Training with config: $config_path (rank=$rank)"
+
+#     config_name=$(basename "$config_path")
+#     config_name="${config_name%.yaml}"
+
+#     for version in "${shift_versions[@]}"; do
+#         export SHIFT_VERSION="${version}-${rank}"
+
+#         echo "Current SHIFT_VERSION: $SHIFT_VERSION"
+
+#         # 构建输出路径
+#         output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
+#         if [[ "$config_name" == *"lora"* ]]; then
+#             output_path="$output_path/complete_ckpt"
+#         fi
+
+#         # 可选：执行训练
+#         # FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+
+#         # 执行评估
+#         for task_str in "${tasks[@]}"; do
+#             IFS='|' read -r task_name n <<< "$task_str"
+
+#             echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+#             skythought evaluate \
+#                 --model "$output_path" \
+#                 --system-prompt-name skythought \
+#                 --task "$task_name" \
+#                 --backend ray \
+#                 --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+#                 --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+#                 --n=$n \
+#                 --result-dir "./evaluate_results-temp0.6-tp95-n128/math-long-cot-20k/$task_name"
+#         done
+#     done
+# done
+
+
 

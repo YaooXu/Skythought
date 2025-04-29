@@ -838,5 +838,34 @@
       "user_tag": "user",
       "assistant_tag": "assistant"
     }
+  },
+  
+  "math-code-long-cot-40k": {
+    "file_name": "Open-Thoughts/math_code_long_cot_samples-40k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "math-code-short-cot-40k": {
+    "file_name": "Open-Thoughts/math_code_short_cot_samples-40k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
   }
 }

@@ -175,3 +175,4 @@ wandb
 huggingface_models
 skythought/configs
 skythought/tmp/*
+skythought/save/*

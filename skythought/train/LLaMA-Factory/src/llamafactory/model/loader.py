@@ -14,6 +14,7 @@
 
 from typing import TYPE_CHECKING, Any, Dict, Optional, TypedDict
 
+import deepspeed
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq, AutoProcessor, AutoTokenizer
 from trl import AutoModelForCausalLMWithValueHead
@@ -125,7 +126,7 @@ def load_model(
     finetuning_args: "FinetuningArguments",
     is_trainable: bool = False,
     add_valuehead: bool = False,
-    without_peft=False
+    load_bare_model=False,
 ) -> "PreTrainedModel":
     r"""
     Loads pretrained model.
@@ -147,6 +148,9 @@ def load_model(
         init_kwargs["config"] = config
         init_kwargs["pretrained_model_name_or_path"] = model_args.model_name_or_path
 
+        if load_bare_model:
+            init_kwargs['device_map'] = 'cpu' 
+        
         if model_args.mixture_of_depths == "load":
             model = load_mod_pretrained_model(**init_kwargs)
         else:
@@ -158,17 +162,35 @@ def load_model(
             if model_args.train_from_scratch:
                 model = load_class.from_config(config, trust_remote_code=True)
             else:
+                from deepspeed.runtime.zero.partition_parameters import GatheredParameters
+                import torch.distributed as dist
+                
                 if model_args.shift_gate:
-                    logger.info_rank0("Using Qwen2ForCausalLM with shift_gate.")
+                    
                     from ..custom_models.modeling_qwen2_shift_gate import Qwen2ForCausalLM
                     model = Qwen2ForCausalLM.from_pretrained(**init_kwargs)
+
+                    if not load_bare_model:
+                        with torch.no_grad():
+                            for name, module in model.named_modules():
+                                if isinstance(module, torch.nn.Linear) and ('W' in name):
+                                    with GatheredParameters([module.weight], modifier_rank=0):
+                                        if dist.get_rank() == 0:
+                                            module.weight.zero_()
+                                        dist.broadcast(module.weight.data, src=0)
+
+                                    if module.bias is not None:
+                                        with GatheredParameters([module.bias], modifier_rank=0):
+                                            if dist.get_rank() == 0:
+                                                module.bias.zero_()
+                                            dist.broadcast(module.bias.data, src=0)
                 else:
                     model = load_class.from_pretrained(**init_kwargs)
 
         if model_args.mixture_of_depths == "convert":
             model = convert_pretrained_model_to_mod(model, config, model_args)
 
-    if without_peft:
+    if load_bare_model:
         return model
     
     if not lazy_load:

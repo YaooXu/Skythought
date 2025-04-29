@@ -47,7 +47,7 @@ cd Skythought
 pip install -r requirements.txt
 pip install -e .
 
-git clone https://github.com/YaooXu/LoRA-GA
+# git clone https://github.com/YaooXu/LoRA-GA
 cd LoRA-GA
 pip install -e peft
 

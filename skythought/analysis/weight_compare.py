@@ -312,8 +312,11 @@ if __name__ == "__main__":
     #    "skythought/saves/Bespoke-Stratos-17k/Qwen2.5-7B-Instruct/full",
     #    "skythought/saves/Bespoke-Stratos-17k/Qwen2.5-7B-Instruct/lora-64-shift_gate_v2.3/complete_ckpt"
 
-    "skythought/saves/math-short-cot-20k/Qwen2.5-7B-Instruct/full/checkpoint-936",
-    "skythought/saves/math-short-cot-20k/Qwen2.5-7B-Instruct/lora-64/complete_ckpt",
+    # "skythought/save/qwen2-7b_full_sft_math_code_short_cot_20k/checkpoint-624",
+    # "skythought/save/qwen2-7b_lora_sft_math_code_short_cot_20k-32/complete_ckpt",
+    # "skythought/save/qwen2-7b_lora_sft_math_code_short_cot_20k-64/complete_ckpt",
+    # "skythought/save/qwen2-7b_lora_sft_math_code_short_cot_20k-128/complete_ckpt",
+    "skythought/save/qwen2-7b_lora_sft_math_code_long_cot_20k-32/complete_ckpt",
     ]
 
     for sft_model_path in sft_model_paths:

@@ -121,11 +121,11 @@ def fetch_responses_ray(
     model_config: ModelConfig,
     sampling_params: SamplingParameters,
 ):
-    if 'shift' in model_config.model_id:
-        logger.info('Using shift model!')
-        config_name = 'ray_shift_config.yaml'
-    else:
-        config_name = 'ray_config.yaml'
+    # if 'shift' in model_config.model_id:
+    #     logger.info('Using shift model!')
+    #     config_name = 'ray_shift_config.yaml'
+    # else:
+    config_name = 'ray_config.yaml'
     
     config = backend_args.get_ray_llm_config(config_name)
     config["model_id"] = model_config.model_id
@@ -262,25 +262,25 @@ def inference(
         batch_size = kwargs.get("batch_size", 1)
         assert batch_size == 1
         
-        conversations = conversations[:200]
+        conversations = conversations
         
         engine_kwargs = copy.deepcopy(backend_params.to_dict())
         engine_kwargs["model"] = model_config.model_id
         llm = LLM(enforce_eager=True, **engine_kwargs)
 
-        num_layers = llm.llm_engine.model_config.hf_config.num_hidden_layers
+        # num_layers = llm.llm_engine.model_config.hf_config.num_hidden_layers
         
-        zip_file_path = create_temp_pkl_name(model_config.model_id)
+        # zip_file_path = create_temp_pkl_name(model_config.model_id)
         
-        for i in range(num_layers):
-            obj = llm.llm_engine.model_executor.driver_worker.worker.model_runner.model.model.layers[i].mlp
-            obj.forward = MethodType(factory(i, model_config.model_id), obj)
+        # for i in range(num_layers):
+        #     obj = llm.llm_engine.model_executor.driver_worker.worker.model_runner.model.model.layers[i].mlp
+        #     obj.forward = MethodType(factory(i, model_config.model_id), obj)
         
         response_in_batches = []
         for i in range(0, len(conversations), batch_size):
             
-            global layer_activation
-            layer_activation.clear()
+            # global layer_activation
+            # layer_activation.clear()
             
             response_batch = llm.chat(
                 messages=conversations[i : i + batch_size],
@@ -289,36 +289,36 @@ def inference(
                 add_generation_prompt=model_config.assistant_prefill is None,
                 continue_final_message=model_config.assistant_prefill is not None,
                 )
-            layer_activation_changes = dict()
-            for layer in layer_activation:
-                activations = torch.stack(layer_activation[layer]).squeeze(1)
-                activations_norm = torch.norm(activations, p=2, dim=1)  # shape=(1024,)
+            # layer_activation_changes = dict()
+            # for layer in layer_activation:
+            #     activations = torch.stack(layer_activation[layer]).squeeze(1)
+            #     activations_norm = torch.norm(activations, p=2, dim=1)  # shape=(1024,)
                 
-                deltas = activations[1:] - activations[:-1]
+            #     deltas = activations[1:] - activations[:-1]
                 
-                delta_norms = torch.norm(deltas, p=2, dim=1)  # shape=(1023,)
+            #     delta_norms = torch.norm(deltas, p=2, dim=1)  # shape=(1023,)
                 
-                z_delta = torch.norm(activations[0] - activations[-1], p=2)
+            #     z_delta = torch.norm(activations[0] - activations[-1], p=2)
                 
-                prev_norms = torch.norm(activations[:-1], p=2, dim=1)  # shape=(1023,)
-                relative_deltas = delta_norms / prev_norms  # shape=(1023,)
+            #     prev_norms = torch.norm(activations[:-1], p=2, dim=1)  # shape=(1023,)
+            #     relative_deltas = delta_norms / prev_norms  # shape=(1023,)
                 
-                cos_sims = F.cosine_similarity(activations[1:], activations[:-1], dim=1)
+            #     cos_sims = F.cosine_similarity(activations[1:], activations[:-1], dim=1)
                 
-                z_cos_sim = F.cosine_similarity(activations[0].unsqueeze(0), activations[-1].unsqueeze(0), dim=-1)
+            #     z_cos_sim = F.cosine_similarity(activations[0].unsqueeze(0), activations[-1].unsqueeze(0), dim=-1)
                 
-                layer_activation_changes[layer] = {
-                    "activations_norm": activations_norm.cpu().float().detach().numpy(),
-                    "delta_norms": delta_norms.cpu().float().detach().numpy(),
-                    "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
-                    "cos_sims": cos_sims.cpu().float().detach().numpy(),
-                    "z_delta": z_delta.cpu().float().detach().numpy(),
-                    "z_cos_sim": z_cos_sim.cpu().float().detach().numpy(),
-                }
+            #     layer_activation_changes[layer] = {
+            #         "activations_norm": activations_norm.cpu().float().detach().numpy(),
+            #         "delta_norms": delta_norms.cpu().float().detach().numpy(),
+            #         "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
+            #         "cos_sims": cos_sims.cpu().float().detach().numpy(),
+            #         "z_delta": z_delta.cpu().float().detach().numpy(),
+            #         "z_cos_sim": z_cos_sim.cpu().float().detach().numpy(),
+            #     }
                 
-            with zipfile.ZipFile(zip_file_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
-                serialized_dict = pickle.dumps(layer_activation_changes)
-                zipf.writestr(str(i), serialized_dict)
+            # with zipfile.ZipFile(zip_file_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
+            #     serialized_dict = pickle.dumps(layer_activation_changes)
+            #     zipf.writestr(str(i), serialized_dict)
                             
             response_in_batches.append(response_batch)
             
@@ -327,8 +327,8 @@ def inference(
             responses.extend(response_batch)
         responses = [Response.from_vllm_response(response) for response in responses]
         
-        for i, response in enumerate(responses):
-            response.activation_file = (zip_file_path, str(i))
+        # for i, response in enumerate(responses):
+        #     response.activation_file = (zip_file_path, str(i))
             
     else:
         raise ValueError(f"Invalid backend: {backend}")
@@ -450,33 +450,56 @@ def score_responses(
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_info = {}
-        for unique_id, record in id_to_results.items():
+        # for unique_id, record in id_to_results.items():
+        #     for i in range(N):
+        #         print(i)
+        #         content = record["responses"][i]["content"]
+        #         future = executor.submit(handler.update_results, record, content)
+        #         # track which problem and which response index
+        #         future_to_info[future] = (unique_id, i)
+
+        # for future in tqdm(as_completed(future_to_info), total=len(future_to_info)):
+        #     unique_id, i = future_to_info[future]
+        #     new_response_entry = future.result()
+
+        #     # Update correctness and reason in the original results dict
+        #     id_to_results[unique_id]["responses"][i]["correctness"] = (
+        #         new_response_entry["correctness"]
+        #     )
+        #     id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
+        #         "reason"
+        #     ]
+
+        #     # Track scores separately for metrics like pass@k
+        #     # TODO (sumanthrh): this can be improved
+        #     if unique_id not in id_to_scores:
+        #         id_to_scores[unique_id] = [0 for _ in range(N)]
+        #     id_to_scores[unique_id][i] = new_response_entry["correctness"]
+
+        #     total_correct += new_response_entry["correctness"]
+        #     total_finish += 1
+        
+        for unique_id, record in tqdm(id_to_results.items()):
             for i in range(N):
                 content = record["responses"][i]["content"]
-                future = executor.submit(handler.update_results, record, content)
-                # track which problem and which response index
-                future_to_info[future] = (unique_id, i)
 
-        for future in tqdm(as_completed(future_to_info), total=len(future_to_info)):
-            unique_id, i = future_to_info[future]
-            new_response_entry = future.result()
+                new_response_entry = handler.update_results(record, content)
 
-            # Update correctness and reason in the original results dict
-            id_to_results[unique_id]["responses"][i]["correctness"] = (
-                new_response_entry["correctness"]
-            )
-            id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
-                "reason"
-            ]
+                # Update correctness and reason in the original results dict
+                id_to_results[unique_id]["responses"][i]["correctness"] = (
+                    new_response_entry["correctness"]
+                )
+                id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
+                    "reason"
+                ]
 
-            # Track scores separately for metrics like pass@k
-            # TODO (sumanthrh): this can be improved
-            if unique_id not in id_to_scores:
-                id_to_scores[unique_id] = [0 for _ in range(N)]
-            id_to_scores[unique_id][i] = new_response_entry["correctness"]
+                # Track scores separately for metrics like pass@k
+                if unique_id not in id_to_scores:
+                    id_to_scores[unique_id] = [0 for _ in range(N)]
+                id_to_scores[unique_id][i] = new_response_entry["correctness"]
 
-            total_correct += new_response_entry["correctness"]
-            total_finish += 1
+                total_correct += new_response_entry["correctness"]
+                total_finish += 1
 
     accuracy = round(total_correct / total_finish, 4) if total_finish else 0
     return accuracy, id_to_scores, total_finish
@@ -511,8 +534,10 @@ def generate_and_score(
         **kwargs,
     )
 
+    print(f"Generated {len(id_to_results)} responses")
+
     accuracy, id_to_scores, total_finish = score_responses(
-        handler, id_to_results, max_workers=32
+        handler, id_to_results, max_workers=8
     )
     logger.info(f"Accuracy: {accuracy}")
 
