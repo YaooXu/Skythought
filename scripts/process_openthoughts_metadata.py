@@ -62,7 +62,7 @@ long_cot_samples = []
 short_cot_samples = []
 
 max_length = 16384
-num_samples = 20_000
+num_samples = 80_000  # 我们只需要收集80k，从中可以提取60k和40k
 
 n_code, n_math = 0, 0
 
@@ -72,16 +72,7 @@ for sample in tqdm.tqdm(sub_samples):
     if sample['domain'] == 'math':
         prompt = math_instruction + problem
         
-    # # code没有short cot
-    # elif sample['domain'] == 'code':
-    #     pattern = r'(### Solution Code\n```.*```)'
-    #     match = re.search(pattern, sample['deepseek_solution'], re.DOTALL)
-    #     if not match:
-    #         continue
-    #     prompt = format_code_prompt(sample)
-    #     sample['ground_truth_solution'] = match.group(1)
-        
-    # long_cot_samples
+    # 处理long_cot样本
     conversations = [
         {
             "from": "user",
@@ -97,17 +88,7 @@ for sample in tqdm.tqdm(sub_samples):
         "conversations": conversations
     }
     
-    combined_text = conversations[0]['value'] + conversations[-1]['value']
-    # 对拼接后的文本进行编码
-    encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
-    # 获取 token 长度
-    token_length = encoded['input_ids'].shape[1]
-    # 获取 token 长度
-
-    if token_length + 32 > max_length:
-        continue
-        
-    # short_cot_samples
+    # 处理short_cot样本
     conversations = [
         {
             "from": "user",
@@ -123,6 +104,14 @@ for sample in tqdm.tqdm(sub_samples):
         "conversations": conversations
     }
     
+    # 检查token长度
+    combined_text = conversations[0]['value'] + conversations[-1]['value']
+    encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
+    token_length = encoded['input_ids'].shape[1]
+    
+    if token_length + 32 > max_length:
+        continue
+        
     if short_cot_sample['conversations'][1]['value'].startswith('### Solution Code'):
         n_code += 1
     else:
@@ -134,48 +123,65 @@ for sample in tqdm.tqdm(sub_samples):
     if len(long_cot_samples) >= num_samples:
         break
 
-print(n_code, n_math)
+print(f"Code samples: {n_code}, Math samples: {n_math}")
 
-long_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_long_cot_samples-20k.json"
-short_cot_filename = "skythought/train/LLaMA-Factory/data/Open-Thoughts/math_short_cot_samples-20k.json"
+# 保存不同规模的数据
+output_dir = "skythought/train/LLaMA-Factory/data/Open-Thoughts/"
+Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-Path(long_cot_filename).parent.mkdir(parents=True, exist_ok=True)
-
-with open(long_cot_filename, "w") as f:
+# 保存80k数据（完整数据集）
+with open(output_dir + "math_long_cot_samples-80k.json", "w") as f:
     json.dump(long_cot_samples, f, indent=4)
-    
-with open(short_cot_filename, "w") as f:
+with open(output_dir + "math_short_cot_samples-80k.json", "w") as f:
     json.dump(short_cot_samples, f, indent=4)
-    
 
-def analysis_token_length(file_name):
-    # 初始化一个列表来存储每个样本的 token 长度
-    token_lengths = []
+# 从80k中提取前60k
+with open(output_dir + "math_long_cot_samples-60k.json", "w") as f:
+    json.dump(long_cot_samples[:60000], f, indent=4)
+with open(output_dir + "math_short_cot_samples-60k.json", "w") as f:
+    json.dump(short_cot_samples[:60000], f, indent=4)
 
-    with open(file_name, 'r') as f:
-        samples = json.load(f)
+# 从80k中提取前40k
+with open(output_dir + "math_long_cot_samples-40k.json", "w") as f:
+    json.dump(long_cot_samples[:40000], f, indent=4)
+with open(output_dir + "math_short_cot_samples-40k.json", "w") as f:
+    json.dump(short_cot_samples[:40000], f, indent=4)
+
+
+with open(output_dir + "math_long_cot_samples-10k.json", "w") as f:
+    json.dump(long_cot_samples[:10000], f, indent=4)
+with open(output_dir + "math_short_cot_samples-10k.json", "w") as f:
+    json.dump(short_cot_samples[:10000], f, indent=4)
+
+
+# def analysis_token_length(file_name):
+#     # 初始化一个列表来存储每个样本的 token 长度
+#     token_lengths = []
+
+#     with open(file_name, 'r') as f:
+#         samples = json.load(f)
         
-    for sample in tqdm.tqdm(samples):
-        # 拼接所有对话中的 value 内容
-        combined_text = sample['conversations'][-1]['value']
-        # 对拼接后的文本进行编码
-        encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
-        # 获取 token 长度
-        token_length = encoded['input_ids'].shape[1]
-        # 将 token 长度添加到列表中
-        token_lengths.append(token_length)
+#     for sample in tqdm.tqdm(samples):
+#         # 拼接所有对话中的 value 内容
+#         combined_text = sample['conversations'][-1]['value']
+#         # 对拼接后的文本进行编码
+#         encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
+#         # 获取 token 长度
+#         token_length = encoded['input_ids'].shape[1]
+#         # 将 token 长度添加到列表中
+#         token_lengths.append(token_length)
         
-    # 将 token 长度转换为 numpy 数组
-    token_lengths = np.array(token_lengths)
+#     # 将 token 长度转换为 numpy 数组
+#     token_lengths = np.array(token_lengths)
     
-    plt.hist(token_lengths, bins=50, edgecolor='black')
-    plt.title('Token Length Distribution')
-    plt.xlabel('Token Length')
-    plt.ylabel('Frequency')
-    # plt.savefig(f'{file_name.split}.png')
-    plt.show()
+#     plt.hist(token_lengths, bins=50, edgecolor='black')
+#     plt.title('Token Length Distribution')
+#     plt.xlabel('Token Length')
+#     plt.ylabel('Frequency')
+#     # plt.savefig(f'{file_name.split}.png')
+#     plt.show()
 
-    return token_lengths
+#     return token_lengths
 
 # analysis_token_length(long_cot_filename)
 # analysis_token_length(short_cot_filename)

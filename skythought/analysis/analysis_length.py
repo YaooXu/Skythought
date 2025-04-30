@@ -58,8 +58,8 @@ pathes = [
     # '/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.7/math-long-cot-20k/math500/._save_qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt_math500_4fb95e/results.json',
     # '/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.7/math-long-cot-20k/math500/._save_qwen2-7b_lora_sft_math_long_cot_20k-64-shift_gate_v2cat-64_complete_ckpt_math500_698453/results.json'
     
-    '/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.5-tp95/math-long-cot-20k/olympiadbench_math_en/._save_qwen2-7b_full_sft_math_long_cot_20k_olympiadbench_math_en_56fde8/results.json',
-    '/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.5-tp95/math-long-cot-20k/olympiadbench_math_en/._save_qwen2-7b_full_sft_math_long_cot_20k-shift_gate_v4pre-256_olympiadbench_math_en_f66cd0/results.json'
+    '/mnt/workspace/user/sunwangtao/Skythought/skythought/diff_temps/evaluate_results-temp0.6-tp95/math-long-cot-20k/olympiadbench_math_en/._save_qwen2-7b_full_sft_math_long_cot_20k_olympiadbench_math_en_c19d03/results.json',
+    '/mnt/workspace/user/sunwangtao/Skythought/skythought/diff_temps/evaluate_results-temp0.6-tp95/math-long-cot-20k/olympiadbench_math_en/._save_qwen2-7b_full_sft_math_long_cot_20k-shift_gate_v2cat_scale_glu_relu-256_olympiadbench_math_en_7b4bd6/results.json'
 ]
 
 for p in pathes:

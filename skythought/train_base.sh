@@ -19,23 +19,14 @@ num_replicas=8
 export CHECKPOINT_SAVE='./save'
 
 # Evaluation tasks
-# tasks=(
-#     "gsm8k|4"
-#     "math500|4"
-#     "olympiadbench_math_en|4"
-#     # "livecodebench|3"
-#     "aime24|16"
-#     "amc23|16"
-# )
-
 tasks=(
-    # "gsm8k|1"
-    # "math500|1"
-    # "olympiadbench_math_en|1"
-    # "livecodebench|3"
-    "aime24|128"
-    # "amc23|1"
+    "math500|8"
+    "olympiadbench_math_en|8"
+    "aime24|16"
+    "aime25|16"
+    "amc23|16"
 )
+
 
 train_configs=(
     # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-32.yaml"
@@ -65,21 +56,23 @@ for config_path in "${train_configs[@]}"; do
     # FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
 
     # Run evaluation
-    for task_str in "${tasks[@]}"; do
+    for tmp in 0.7 ; do
+        for task_str in "${tasks[@]}"; do
 
-        IFS='|' read -r task_name n <<< "$task_str"
+            IFS='|' read -r task_name n <<< "$task_str"
 
-        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
-        skythought evaluate \
-            --model "$output_path" \
-            --system-prompt-name skythought \
-            --task "$task_name" \
-            --backend ray \
-            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
-            --n=$n \
-            --result-dir "./evaluate_results-temp0.6-tp95-n128/math-long-cot-20k/$task_name"
+            skythought evaluate \
+                --model "$output_path" \
+                --system-prompt-name skythought \
+                --task "$task_name" \
+                --backend ray \
+                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                --sampling-params temperature=$tmp,top_p=0.95,max_tokens=16384 \
+                --n=$n \
+                --result-dir "./diff_temps/evaluate_results-temp$tmp-tp95/math-long-cot-20k/$task_name"
+        done
     done
 
 done

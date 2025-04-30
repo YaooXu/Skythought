@@ -755,20 +755,6 @@
       "assistant_tag": "assistant"
     }
   },
-  "math-long-cot-40k": {
-    "file_name": "Open-Thoughts/math_long_cot_samples-40k.json",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "conversations",
-      "system": "system"
-    },
-    "tags": {
-      "role_tag": "from",
-      "content_tag": "value",
-      "user_tag": "user",
-      "assistant_tag": "assistant"
-    }
-  },
   "math-short-cot-40k": {
     "file_name": "Open-Thoughts/math_short_cot_samples-40k.json",
     "formatting": "sharegpt",
@@ -783,8 +769,64 @@
       "assistant_tag": "assistant"
     }
   },
+  "math-long-cot-10k": {
+    "file_name": "Open-Thoughts/math_long_cot_samples-10k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
   "math-long-cot-20k": {
     "file_name": "Open-Thoughts/math_long_cot_samples-20k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "math-long-cot-40k": {
+    "file_name": "Open-Thoughts/math_long_cot_samples-40k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "math-long-cot-60k": {
+    "file_name": "Open-Thoughts/math_long_cot_samples-60k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "system": "system"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "math-long-cot-80k": {
+    "file_name": "Open-Thoughts/math_long_cot_samples-80k.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "conversations",

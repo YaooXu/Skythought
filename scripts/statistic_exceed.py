@@ -2,7 +2,7 @@ import os
 import json
 from tqdm import tqdm
 
-ROOT_DIR = "skythought/evaluate_results-temp0.6-tp95-n128/math-long-cot-20k"  # 替换为你的根目录
+ROOT_DIR = "skythought/evaluate_results-temp0.6-tp95/math-long-cot-20k"  # 替换为你的根目录
 TOKEN_LIMIT = 16384
 
 def get_token_length(text):

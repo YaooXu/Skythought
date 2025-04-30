@@ -423,7 +423,7 @@ class Qwen2MLP(nn.Module):
                 prefix=f"{prefix}.shift_weight",
             )
 
-        if self.shift_version in ('v2cat_scale_glu_relu', ):
+        if self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu'):
             self.R = RowParallelLinear(
                 hidden_size,
                 rank,
@@ -596,6 +596,8 @@ class Qwen2MLP(nn.Module):
             self.get_final_gate = self.get_final_gate_v2cat_scale
         elif self.shift_version == "v2cat_scale_glu_relu":
             self.get_final_gate = self.get_final_gate_v2cat_scale_glu_relu
+        elif self.shift_version == "v2cat_scale_glu":
+            self.get_final_gate = self.get_final_gate_v2cat_scale_glu
         elif self.shift_version == "v2cat_glu":
             self.get_final_gate = self.get_final_gate_v2cat_glu
         elif self.shift_version == "v2cat_glu_silu":
@@ -652,6 +654,12 @@ class Qwen2MLP(nn.Module):
     def get_final_gate_v2cat_scale(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate
+
+    def get_final_gate_v2cat_scale_glu(self, hidden_states, prev_hidden_states):
+        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
         return final_gate
 
