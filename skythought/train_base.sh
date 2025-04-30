@@ -56,7 +56,7 @@ for config_path in "${train_configs[@]}"; do
     # FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
 
     # Run evaluation
-    for tmp in 0.7 ; do
+    for tmp in 0.6 ; do
         for task_str in "${tasks[@]}"; do
 
             IFS='|' read -r task_name n <<< "$task_str"

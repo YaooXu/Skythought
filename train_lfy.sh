@@ -4,6 +4,7 @@ pip install deepspeed==0.15.3
 
 python scripts/process_openthoughts_metadata.py
 
+cd skythought
 
 export WANDB_API_KEY=efe05a42b8b37cb8028408410c02bcefbddf42c0
 export TRANSFORMERS_OFFLINE=0
@@ -24,11 +25,13 @@ tasks=(
     "aime24|16"
     "aime25|16"
     "amc23|16"
+    "aime24|128"
+    "aime25|128"
 )
 
 # base model
 train_configs=(
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_60k.yaml"
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_40k.yaml"
     "configs/train_full/qwen2-7b_full_sft_math_long_cot_80k.yaml"
 )
 
@@ -39,7 +42,7 @@ for config_path in "${train_configs[@]}"; do
     config_name="${config_name%.yaml}"
     output_path="$CHECKPOINT_SAVE/$config_name"
     
-    # 提取数字部分（60k或80k）
+    # 提取数字部分（40k或80k）
     size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
     
     if [[ "$config_name" == *"lora"* ]]; then
@@ -62,9 +65,9 @@ for config_path in "${train_configs[@]}"; do
             --task "$task_name" \
             --backend ray \
             --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-            --sampling-params temperature=0.7,top_p=0.95,max_tokens=16384 \
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
             --n=$n \
-            --result-dir "./evaluate_results/temp0.7-tp95/math-long-cot-$size_part/$task_name"
+            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
     done
 done
 
@@ -75,8 +78,10 @@ shift_versions=(
 )
 
 train_configs=(
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_60k-shift_gate.yaml|256"
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_40k-shift_gate.yaml|256"
     "configs/train_full/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|256"
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_40k-shift_gate.yaml|512"
+    "configs/train_full/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|512"
 )
 
 
@@ -118,9 +123,9 @@ for config_item in "${train_configs[@]}"; do
                 --task "$task_name" \
                 --backend ray \
                 --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-                --sampling-params temperature=0.7,top_p=0.95,max_tokens=16384 \
+                --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
                 --n=$n \
-                --result-dir "./evaluate_results/temp0.7-tp95/math-long-cot-$size_part/$task_name"
+                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
         done
     done
 done

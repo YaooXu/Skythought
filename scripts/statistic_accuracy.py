@@ -72,6 +72,7 @@ def process_folder(folder_path):
 def collect_accuracy_data(root_dir):
     # 存储数据结构：model_name -> {dataset -> accuracy}
     accuracy_data = defaultdict(dict)
+    exceed_data = defaultdict(dict)
     n_data = defaultdict(int)
 
     datasets = set()
@@ -91,19 +92,22 @@ def collect_accuracy_data(root_dir):
             # 读取summary.json
             with open(os.path.join(root, 'summary.json'), 'r') as f:
                 summary = json.load(f)
+
                 accuracy = summary.get('accuracy', None)
-                # accuracy = summary.get('exceed_in_total', None)
+
+                exceed = summary.get('exceed_in_total', None)
                 
                 n = summary['configuration']['sampling_params']['n']
                 
                 if n > n_data[(model_name, dataset)]:
                     accuracy_data[model_name][dataset] = accuracy
+                    exceed_data[model_name][dataset] = exceed
                     n_data[(model_name, dataset)] = n
 
                 datasets.add(dataset)
                 models.add(model_name)
     
-    return accuracy_data, sorted(datasets), sorted(models)
+    return accuracy_data, exceed_data, sorted(datasets), sorted(models)
 
 def generate_markdown_table(accuracy_data, datasets, models):
     # 准备表格数据
@@ -144,21 +148,26 @@ def generate_markdown_table(accuracy_data, datasets, models):
     return markdown
 
 def main():
-    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.7-tp95/math-long-cot-20k"  # 当前目录，可以根据需要修改
+    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/diff_temps/evaluate_results-temp0.6-tp95/math-long-cot-20k"  # 当前目录，可以根据需要修改
 
     for root, dirs, files in os.walk(root_dir):
         for d in dirs:
             folder_path = os.path.join(root, d)
             result = process_folder(folder_path)
     
-    accuracy_data, datasets, models = collect_accuracy_data(root_dir)
-    markdown_table = generate_markdown_table(accuracy_data, datasets, models)
+    accuracy_data, exceed_data, datasets, models = collect_accuracy_data(root_dir)
+    markdown_table1 = generate_markdown_table(accuracy_data, datasets, models)
     
+    markdown_table2 = generate_markdown_table(exceed_data, datasets, models)
+
     # 保存到文件
     with open("model_performance.md", "w") as f:
-        f.write("# Model Performance Across Datasets\n\n")
-        f.write(markdown_table)
-    
+        f.write("# Acc\n\n")
+        f.write(markdown_table1 + '\n\n\n\n')
+
+        f.write("# Exceed\n\n")
+        f.write(markdown_table2)
+
     print("Markdown table generated successfully in model_performance.md")
 
 if __name__ == "__main__":
