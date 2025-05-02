@@ -269,7 +269,7 @@ class Qwen2MLP_shift(nn.Module):
             self.W = nn.Linear(rank, self.intermediate_size, bias=False)
             self.scale = nn.Linear(self.hidden_size, 1, bias=False)
 
-        elif self.shift_version in ('v4pre', ): # 3
+        elif self.shift_version in ('v4pre', ): # 5
             self.R = nn.Linear(self.hidden_size, rank, bias=False)
             self.W = nn.Linear(rank, self.intermediate_size, bias=False)
             self.scale = nn.Linear(self.hidden_size, 1, bias=False)
@@ -304,12 +304,12 @@ class Qwen2MLP_shift(nn.Module):
             self.W = nn.Linear(rank, self.hidden_size, bias=False)
             self.scale = nn.Linear(self.hidden_size, 1, bias=False)
 
-        elif self.shift_version in ('v2pre', ):
+        elif self.shift_version in ('v2pre', ): # 2 60
             self.R = nn.Linear(self.hidden_size, rank, bias=False)
             self.W = nn.Linear(rank, self.hidden_size, bias=False)
             self.scale = nn.Linear(self.hidden_size, 1, bias=False)
 
-        elif self.shift_version in ('v2pre_glu', 'v2pre_glu_silu'):
+        elif self.shift_version in ('v2pre_glu', 'v2pre_glu_relu'): # 3 58
             self.R = nn.Linear(self.hidden_size, rank, bias=False)
             self.W = nn.Linear(rank, self.hidden_size, bias=False)
             self.scale = nn.Linear(self.hidden_size, rank, bias=False)
@@ -489,8 +489,10 @@ class Qwen2MLP_shift(nn.Module):
                 
                 final_gate = self.gate_proj(conv_hidden_state)
 
-            elif self.shift_version in ('v2pre_glu', 'v2pre_glu_bias'):
-                alpha = F.sigmoid(self.scale(hidden_state_shift))
+            elif self.shift_version in ('v2pre_glu', 'v2pre_glu_relu'):
+                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
+
+                alpha = act_fn(self.scale(hidden_state_shift))
                 conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha) 
                 
                 final_gate = self.gate_proj(conv_hidden_state)

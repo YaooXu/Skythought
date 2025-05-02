@@ -540,7 +540,7 @@ class Qwen2MLP(nn.Module):
                 prefix=f"{prefix}.shift_weight",
             )
 
-        if self.shift_version in ('v2pre_glu', 'v2pre_glu_silu'):
+        if self.shift_version in ('v2pre_glu', 'v2pre_glu_relu'):
             self.R = RowParallelLinear(
                 hidden_size,
                 rank,
@@ -614,8 +614,8 @@ class Qwen2MLP(nn.Module):
             self.get_final_gate = self.get_final_gate_v2pre_sae
         elif self.shift_version in ("v2pre_glu", 'v2pre_glu_bias'):
             self.get_final_gate = self.get_final_gate_v2pre_glu
-        elif self.shift_version in ("v2pre_glu_silu",):
-            self.get_final_gate = self.get_final_gate_v2pre_glu_silu
+        elif self.shift_version in ("v2pre_glu_relu",):
+            self.get_final_gate = self.get_final_gate_v2pre_glu_relu
         elif self.shift_version == "v4pre_glu":
             self.get_final_gate = self.get_final_gate_v4pre_glu
         elif self.shift_version == "v4pre":
@@ -717,8 +717,8 @@ class Qwen2MLP(nn.Module):
         final_gate = self.gate_proj(conv_hidden_states)[0]
         return final_gate
 
-    def get_final_gate_v2pre_glu_silu(self, hidden_states, prev_hidden_states):
-        alpha = self.act_fn(self.scale(prev_hidden_states)[0])
+    def get_final_gate_v2pre_glu_relu(self, hidden_states, prev_hidden_states):
+        alpha = F.relu(self.scale(prev_hidden_states)[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
         return final_gate

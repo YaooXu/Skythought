@@ -28,7 +28,7 @@ from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretraine
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer, patch_valuehead_model
-
+import os
 
 if TYPE_CHECKING:
     from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
@@ -173,17 +173,30 @@ def load_model(
                     if not load_bare_model:
                         with torch.no_grad():
                             for name, module in model.named_modules():
-                                if isinstance(module, torch.nn.Linear) and ('W' in name):
-                                    with GatheredParameters([module.weight], modifier_rank=0):
-                                        if dist.get_rank() == 0:
-                                            module.weight.zero_()
-                                        dist.broadcast(module.weight.data, src=0)
-
-                                    if module.bias is not None:
-                                        with GatheredParameters([module.bias], modifier_rank=0):
+                                if 'relu' in os.environ.get('SHIFT_VERSION', ''):
+                                    if isinstance(module, torch.nn.Linear) and ('W' in name):
+                                        with GatheredParameters([module.weight], modifier_rank=0):
                                             if dist.get_rank() == 0:
-                                                module.bias.zero_()
-                                            dist.broadcast(module.bias.data, src=0)
+                                                module.weight.zero_()
+                                            dist.broadcast(module.weight.data, src=0)
+
+                                        if module.bias is not None:
+                                            with GatheredParameters([module.bias], modifier_rank=0):
+                                                if dist.get_rank() == 0:
+                                                    module.bias.zero_()
+                                                dist.broadcast(module.bias.data, src=0)
+                                else:
+                                    if isinstance(module, torch.nn.Linear) and ('W' in name or 'scale' in name):
+                                        with GatheredParameters([module.weight], modifier_rank=0):
+                                            if dist.get_rank() == 0:
+                                                module.weight.zero_()
+                                            dist.broadcast(module.weight.data, src=0)
+
+                                        if module.bias is not None:
+                                            with GatheredParameters([module.bias], modifier_rank=0):
+                                                if dist.get_rank() == 0:
+                                                    module.bias.zero_()
+                                                dist.broadcast(module.bias.data, src=0)                                    
                 else:
                     model = load_class.from_pretrained(**init_kwargs)
 

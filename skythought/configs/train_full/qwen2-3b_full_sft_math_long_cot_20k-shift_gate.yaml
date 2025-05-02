@@ -19,7 +19,7 @@ overwrite_cache: true
 preprocessing_num_workers: 16
 
 ### output
-output_dir: qwen2-7b_full_sft_math_long_cot_20k-shift_gate
+output_dir: qwen2-3b_full_sft_math_long_cot_20k-shift_gate
 logging_steps: 1
 save_steps: 200
 plot_loss: true
@@ -35,5 +35,5 @@ bf16: true
 ddp_timeout: 180000000
 
 report_to: wandb
-run_name: qwen2-7b_full_sft_math_long_cot_20k-shift_gate
+run_name: qwen2-3b_full_sft_math_long_cot_20k-shift_gate
 
