@@ -3,7 +3,7 @@ cd LoRA-GA
 git pull
 cd ..
 
-pip install deepspeed==0.15.3
+export HF_ENDPOINT=https://hf-mirror.com
 
 # python scripts/process_openthoughts_metadata.py
 
@@ -32,15 +32,117 @@ tasks=(
     # "aime25|128"
 )
 
+for num_data in 40k 80k ; do
+    # base model
+    train_configs=(
+        "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_$num_data-256.yaml"
+    )
+
+    export GATE_RANK_COE="1"
+
+    for config_path in "${train_configs[@]}"; do
+        echo "Training with config: $config_path"
+
+        config_name=$(basename "$config_path")
+        config_name="${config_name%.yaml}"
+        output_path="$CHECKPOINT_SAVE/$config_name"
+        
+        # 提取数字部分（40k或80k）
+        size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+        
+        if [[ "$config_name" == *"lora"* ]]; then
+            output_path="$output_path/complete_ckpt"
+        fi
+
+        echo "Output will be saved to: $output_path"
+        
+        export HF_ENDPOINT=https://hf-mirror.com
+        FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+
+        # Run evaluation
+        for task_str in "${tasks[@]}"; do
+            IFS='|' read -r task_name n <<< "$task_str"
+
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+            export HF_ENDPOINT=https://hf-mirror.com
+            cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+                --model "$output_path" \
+                --system-prompt-name skythought \
+                --task "$task_name" \
+                --backend ray \
+                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+                --n=$n \
+                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+        done
+    done
+
+
+    # shift model
+    shift_versions=(
+        v2cat_scale_glu_relu
+    )
+
+    train_configs=(
+        "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_$num_data-256-shift_gate.yaml|256"
+    )
+
+    export GATE_RANK_COE="1"
+
+    # 遍历每个配置
+    for config_item in "${train_configs[@]}"; do
+        # 分割 config_path 和 rank
+        IFS='|' read -r config_path rank <<< "$config_item"
+
+        echo "Training with config: $config_path (rank=$rank)"
+
+        config_name=$(basename "$config_path")
+        config_name="${config_name%.yaml}"
+
+        size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+
+        for version in "${shift_versions[@]}"; do
+            export SHIFT_VERSION="${version}-${rank}"
+
+            echo "Current SHIFT_VERSION: $SHIFT_VERSION"
+
+            # 构建输出路径
+            output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
+            if [[ "$config_name" == *"lora"* ]]; then
+                output_path="$output_path/complete_ckpt"
+            fi
+
+            export HF_ENDPOINT=https://hf-mirror.com
+            # 可选：执行训练
+            FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+
+            # 执行评估
+            for task_str in "${tasks[@]}"; do
+                IFS='|' read -r task_name n <<< "$task_str"
+
+                echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+                export HF_ENDPOINT=https://hf-mirror.com
+                cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+                    --model "$output_path" \
+                    --system-prompt-name skythought \
+                    --task "$task_name" \
+                    --backend ray \
+                    --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                    --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+                    --n=$n \
+                    --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+            done
+        done
+    done
+
+done
+
+
 # base model
 train_configs=(
-    # "configs/train_full/qwen2-3b_full_sft_math_long_cot_10k.yaml"
-    # "configs/train_full/qwen2-3b_full_sft_math_long_cot_20k.yaml"
-
-    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_80k-256.yaml"
-
-    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-128-gate1.6.yaml"
-    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-128.yaml"
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k.yaml"
 )
 
 export GATE_RANK_COE="1"
@@ -61,7 +163,8 @@ for config_path in "${train_configs[@]}"; do
 
     echo "Output will be saved to: $output_path"
     
-    FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+    export HF_ENDPOINT=https://hf-mirror.com
+    FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
 
     # Run evaluation
     for task_str in "${tasks[@]}"; do
@@ -69,7 +172,8 @@ for config_path in "${train_configs[@]}"; do
 
         echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
-        skythought evaluate \
+        export HF_ENDPOINT=https://hf-mirror.com
+        cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
             --model "$output_path" \
             --system-prompt-name skythought \
             --task "$task_name" \
@@ -81,65 +185,47 @@ for config_path in "${train_configs[@]}"; do
     done
 done
 
-
-# shift model
-shift_versions=(
-    v2cat_scale_glu_relu
-)
-
+# base model
 train_configs=(
-    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_80k-220-shift_gate.yaml|220"
-    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_80k-256-shift_gate.yaml|256"
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_40k.yaml"
 )
 
 export GATE_RANK_COE="1"
 
-# 遍历每个配置
-for config_item in "${train_configs[@]}"; do
-    # 分割 config_path 和 rank
-    IFS='|' read -r config_path rank <<< "$config_item"
-
-    echo "Training with config: $config_path (rank=$rank)"
+for config_path in "${train_configs[@]}"; do
+    echo "Training with config: $config_path"
 
     config_name=$(basename "$config_path")
     config_name="${config_name%.yaml}"
-
+    output_path="$CHECKPOINT_SAVE/$config_name"
+    
+    # 提取数字部分（40k或80k）
     size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+    
+    if [[ "$config_name" == *"lora"* ]]; then
+        output_path="$output_path/complete_ckpt"
+    fi
 
-    for version in "${shift_versions[@]}"; do
-        export SHIFT_VERSION="${version}-${rank}"
+    echo "Output will be saved to: $output_path"
+    
+    # export HF_ENDPOINT=https://hf-mirror.com
+    # FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
 
-        echo "Current SHIFT_VERSION: $SHIFT_VERSION"
+    # Run evaluation
+    for task_str in "${tasks[@]}"; do
+        IFS='|' read -r task_name n <<< "$task_str"
 
-        # 构建输出路径
-        output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
-        if [[ "$config_name" == *"lora"* ]]; then
-            output_path="$output_path/complete_ckpt"
-        fi
+        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
-        # 可选：执行训练
-        FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
-
-        # 执行评估
-        for task_str in "${tasks[@]}"; do
-            IFS='|' read -r task_name n <<< "$task_str"
-
-            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
-
-            skythought evaluate \
-                --model "$output_path" \
-                --system-prompt-name skythought \
-                --task "$task_name" \
-                --backend ray \
-                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-                --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
-                --n=$n \
-                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
-        done
+        export HF_ENDPOINT=https://hf-mirror.com
+        cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+            --model "$output_path" \
+            --system-prompt-name skythought \
+            --task "$task_name" \
+            --backend ray \
+            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+            --n=$n \
+            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
     done
 done
-
-
-
-
-
