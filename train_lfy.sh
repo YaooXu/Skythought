@@ -1,4 +1,7 @@
 git pull
+cd LoRA-GA
+git pull
+cd ..
 
 pip install deepspeed==0.15.3
 
@@ -20,20 +23,27 @@ export CHECKPOINT_SAVE='./save'
 
 # Evaluation tasks
 tasks=(
-    "math500|8"
-    "olympiadbench_math_en|8"
-    "aime24|16"
-    "aime25|16"
-    "amc23|16"
-    "aime24|128"
-    "aime25|128"
+    "math500|4"
+    "olympiadbench_math_en|4"
+    "aime24|32"
+    "aime25|32"
+    "amc23|32"
+    # "aime24|128"
+    # "aime25|128"
 )
 
 # base model
 train_configs=(
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_40k.yaml"
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_80k.yaml"
+    # "configs/train_full/qwen2-3b_full_sft_math_long_cot_10k.yaml"
+    # "configs/train_full/qwen2-3b_full_sft_math_long_cot_20k.yaml"
+
+    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_80k-256.yaml"
+
+    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-128-gate1.6.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-128.yaml"
 )
+
+export GATE_RANK_COE="1"
 
 for config_path in "${train_configs[@]}"; do
     echo "Training with config: $config_path"
@@ -78,12 +88,11 @@ shift_versions=(
 )
 
 train_configs=(
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_40k-shift_gate.yaml|256"
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|256"
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_40k-shift_gate.yaml|512"
-    "configs/train_full/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|512"
+    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_80k-220-shift_gate.yaml|220"
+    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_80k-256-shift_gate.yaml|256"
 )
 
+export GATE_RANK_COE="1"
 
 # 遍历每个配置
 for config_item in "${train_configs[@]}"; do
@@ -129,3 +138,8 @@ for config_item in "${train_configs[@]}"; do
         done
     done
 done
+
+
+
+
+

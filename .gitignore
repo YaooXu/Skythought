@@ -173,6 +173,6 @@ run_all.sh
 saves*
 wandb
 huggingface_models
-skythought/configs
+# skythought/configs
 skythought/tmp/*
 skythought/save/*
