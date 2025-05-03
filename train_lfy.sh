@@ -5,7 +5,7 @@ cd ..
 
 pip install deepspeed==0.15.3
 
-python scripts/process_openthoughts_metadata.py
+# python scripts/process_openthoughts_metadata.py
 
 cd skythought
 
