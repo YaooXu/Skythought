@@ -39,12 +39,18 @@ tasks=(
 
 # base model
 train_configs=(
-    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k.yaml"
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_40k.yaml" # exist
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k.yaml" # exist
 )
 
-export GATE_RANK_COE="1"
-
 for config_path in "${train_configs[@]}"; do
+    # 检查config_path是否包含"gate"
+    if [[ "$config_path" == *"gate1.6"* ]]; then
+        export GATE_RANK_COE="1.636" # qwen 7b
+    else
+        export GATE_RANK_COE="1"
+    fi
+
     echo "Training with config: $config_path"
 
     config_name=$(basename "$config_path")
@@ -59,9 +65,17 @@ for config_path in "${train_configs[@]}"; do
     fi
 
     echo "Output will be saved to: $output_path"
-    
-    export HF_ENDPOINT=https://hf-mirror.com
-    FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+
+    # Check if output directory exists
+    if [ ! -d "$output_path" ]; then
+        echo "Directory $output_path doesn't exist. Starting training..."
+        
+        export HF_ENDPOINT=https://hf-mirror.com
+        FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+
+    else
+        echo "Directory $output_path exists. Skipping training."
+    fi
 
     # Run evaluation
     for task_str in "${tasks[@]}"; do
@@ -82,47 +96,74 @@ for config_path in "${train_configs[@]}"; do
     done
 done
 
-# base model
-train_configs=(
-    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_40k.yaml"
+
+# shift model
+shift_versions=(
+    v2cat_scale_glu_relu
 )
 
-export GATE_RANK_COE="1"
+train_configs=(
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|512"
+)
 
-for config_path in "${train_configs[@]}"; do
-    echo "Training with config: $config_path"
+# 遍历每个配置
+for config_item in "${train_configs[@]}"; do
+    # 检查config_path是否包含"gate"
+    if [[ "$config_path" == *"gate1.6"* ]]; then
+        export GATE_RANK_COE="1.636" # qwen 7b
+    else
+        export GATE_RANK_COE="1"
+    fi
+
+    
+    # 分割 config_path 和 rank
+    IFS='|' read -r config_path rank <<< "$config_item"
+
+    echo "Training with config: $config_path (rank=$rank)"
 
     config_name=$(basename "$config_path")
     config_name="${config_name%.yaml}"
-    output_path="$CHECKPOINT_SAVE/$config_name"
-    
-    # 提取数字部分（40k或80k）
+
     size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
-    
-    if [[ "$config_name" == *"lora"* ]]; then
-        output_path="$output_path/complete_ckpt"
-    fi
 
-    echo "Output will be saved to: $output_path"
-    
-    # export HF_ENDPOINT=https://hf-mirror.com
-    # FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+    for version in "${shift_versions[@]}"; do
+        export SHIFT_VERSION="${version}-${rank}"
 
-    # Run evaluation
-    for task_str in "${tasks[@]}"; do
-        IFS='|' read -r task_name n <<< "$task_str"
+        echo "Current SHIFT_VERSION: $SHIFT_VERSION"
 
-        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+        # 构建输出路径
+        output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
+        if [[ "$config_name" == *"lora"* ]]; then
+            output_path="$output_path/complete_ckpt"
+        fi
 
-        export HF_ENDPOINT=https://hf-mirror.com
-        cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
-            --model "$output_path" \
-            --system-prompt-name skythought \
-            --task "$task_name" \
-            --backend ray \
-            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
-            --n=$n \
-            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+        # Check if output directory exists
+        if [ ! -d "$output_path" ]; then
+            echo "Directory $output_path doesn't exist. Starting training..."
+            
+            export HF_ENDPOINT=https://hf-mirror.com
+            FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+
+        else
+            echo "Directory $output_path exists. Skipping training."
+        fi
+
+        # 执行评估
+        for task_str in "${tasks[@]}"; do
+            IFS='|' read -r task_name n <<< "$task_str"
+
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+            export HF_ENDPOINT=https://hf-mirror.com
+            cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+                --model "$output_path" \
+                --system-prompt-name skythought \
+                --task "$task_name" \
+                --backend ray \
+                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+                --n=$n \
+                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+        done
     done
 done

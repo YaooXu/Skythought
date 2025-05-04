@@ -44,14 +44,21 @@ shift_versions=(
 )
 
 train_configs=(
-    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_40k-256-shift_gate.yaml|256"
-    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256-shift_gate.yaml|256"
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_40k-256.yaml"
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-296.yaml"
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256-shift_gate.yaml|256" # exit
 )
-
-export GATE_RANK_COE="1"
 
 # 遍历每个配置
 for config_item in "${train_configs[@]}"; do
+    # 检查config_path是否包含"gate"
+    if [[ "$config_path" == *"gate1.6"* ]]; then
+        export GATE_RANK_COE="1.636" # qwen 7b
+    else
+        export GATE_RANK_COE="1"
+    fi
+
+
     # 分割 config_path 和 rank
     IFS='|' read -r config_path rank <<< "$config_item"
 
@@ -73,9 +80,16 @@ for config_item in "${train_configs[@]}"; do
             output_path="$output_path/complete_ckpt"
         fi
 
-        export HF_ENDPOINT=https://hf-mirror.com
-        # 可选：执行训练
-        FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+        # Check if output directory exists
+        if [ ! -d "$output_path" ]; then
+            echo "Directory $output_path doesn't exist. Starting training..."
+            
+            export HF_ENDPOINT=https://hf-mirror.com
+            FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
+
+        else
+            echo "Directory $output_path exists. Skipping training."
+        fi
 
         # 执行评估
         for task_str in "${tasks[@]}"; do

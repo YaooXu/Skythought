@@ -12,14 +12,14 @@ deepspeed: configs/deepspeed/ds_z0_config.json
 
 ### dataset
 dataset_dir: train/LLaMA-Factory/data
-dataset: math-long-cot-40k
+dataset: math-long-cot-60k
 template: qwen25
 cutoff_len: 16384
 max_samples: 1000000
 overwrite_cache: true
 preprocessing_num_workers: 16
 ### output
-output_dir: qwen2-7b_lora_sft_math_long_cot_40k-256
+output_dir: qwen2-7b_lora_sft_math_long_cot_60k-256
 logging_steps: 1
 save_steps: 200
 plot_loss: true
@@ -36,5 +36,5 @@ ddp_timeout: 180000000
 
 
 report_to: wandb
-run_name: qwen2-7b_lora_sft_math_long_cot_40k-256
+run_name: qwen2-7b_lora_sft_math_long_cot_60k-256
 
