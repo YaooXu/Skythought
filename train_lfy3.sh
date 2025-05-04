@@ -84,7 +84,7 @@ for config_path in "${train_configs[@]}"; do
         echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
         export HF_ENDPOINT=https://hf-mirror.com
-        cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+        /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
             --model "$output_path" \
             --system-prompt-name skythought \
             --task "$task_name" \
@@ -155,7 +155,7 @@ for config_item in "${train_configs[@]}"; do
             echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
             export HF_ENDPOINT=https://hf-mirror.com
-            cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+            /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
                 --model "$output_path" \
                 --system-prompt-name skythought \
                 --task "$task_name" \

@@ -44,9 +44,9 @@ shift_versions=(
 )
 
 train_configs=(
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256-shift_gate.yaml|256" # exit
     "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_40k-256.yaml"
     "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-296.yaml"
-    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256-shift_gate.yaml|256" # exit
 )
 
 # 遍历每个配置
@@ -98,7 +98,7 @@ for config_item in "${train_configs[@]}"; do
             echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
             export HF_ENDPOINT=https://hf-mirror.com
-            cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+            /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
                 --model "$output_path" \
                 --system-prompt-name skythought \
                 --task "$task_name" \

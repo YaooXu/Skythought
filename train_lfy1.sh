@@ -39,9 +39,9 @@ tasks=(
 
 # base model
 train_configs=(
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256.yaml" # exsit
     "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_40k-256-shift_gate.yaml|256"
     "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256-gate1.6.yaml"
-    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256.yaml" # exist
 )
 
 
@@ -79,23 +79,23 @@ for config_path in "${train_configs[@]}"; do
         echo "Directory $output_path exists. Skipping training."
     fi
 
-    # # Run evaluation
-    # for task_str in "${tasks[@]}"; do
-    #     IFS='|' read -r task_name n <<< "$task_str"
+    # Run evaluation
+    for task_str in "${tasks[@]}"; do
+        IFS='|' read -r task_name n <<< "$task_str"
 
-    #     echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
-    #     export HF_ENDPOINT=https://hf-mirror.com
-    #     cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
-    #         --model "$output_path" \
-    #         --system-prompt-name skythought \
-    #         --task "$task_name" \
-    #         --backend ray \
-    #         --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-    #         --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
-    #         --n=$n \
-    #         --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
-    # done
+        export HF_ENDPOINT=https://hf-mirror.com
+        /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/skythought evaluate \
+            --model "$output_path" \
+            --system-prompt-name skythought \
+            --task "$task_name" \
+            --backend ray \
+            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+            --n=$n \
+            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+    done
 done
 
 
