@@ -401,7 +401,7 @@ def math_equal(
     1. numerical equal: both can convert to float and are equal
     2. symbolic equal: both can convert to sympy expression and are equal
     """
-    # print(prediction, reference)
+    print(prediction, reference)
     if prediction is None or reference is None:
         return False
     if str(prediction.strip().lower()) == str(reference.strip().lower()):
@@ -576,38 +576,40 @@ def math_equal(
 def numeric_equal(prediction: float, reference: float):
     return isclose(reference, prediction, rel_tol=1e-4)
 
+import multiprocessing
+from functools import partial
 
-def symbolic_equal(a, b):
-    def _parse(s):
-        for f in [parse_latex, parse_expr, latex2sympy]:
+# Module-level functions that can be pickled
+def _parse(s):
+    for f in [parse_latex, parse_expr, latex2sympy]:
+        try:
+            return f(s.replace("\\\\", "\\"))
+        except Exception:
             try:
-                return f(s.replace("\\\\", "\\"))
+                return f(s)
             except Exception:
-                try:
-                    return f(s)
-                except Exception:
-                    pass
-        return s
-    def is_valid_exponential(a):
-        """
-        判断是否是指数的指数形式。如果是，则返回 False；否则 True
-        """
-        if isinstance(a, Pow):
-            exp = a.exp
-            # 如果指数部分也是一个指数形式，则视为“指数的指数”
-            if isinstance(exp, Pow):
-                return False
-            # 如果指数是嵌套表达式，进一步检查
-            if exp.has(Pow):
-                return False
-        return True
+                pass
+    return s
 
+def is_valid_exponential(a):
+    """
+    Check if the expression is a valid exponential form (not nested exponents)
+    """
+    if isinstance(a, Pow):
+        exp = a.exp
+        if isinstance(exp, Pow):  # If exponent is itself an exponent
+            return False
+        if exp.has(Pow):  # If exponent contains exponents
+            return False
+    return True
+
+def _symbolic_equal_worker(a, b):
     a = _parse(a)
     b = _parse(b)
 
-    if not is_valid_exponential(a):
-        print(a, b)
-        return False
+    # if not is_valid_exponential(a):
+    #     print(a, b)
+    #     return False
 
     # direct equal
     try:
@@ -638,7 +640,6 @@ def symbolic_equal(a, b):
 
     # matrix
     try:
-        # if a and b are matrix
         if a.shape == b.shape:
             _a = a.applyfunc(lambda x: round(x, 3))
             _b = b.applyfunc(lambda x: round(x, 3))
@@ -648,3 +649,38 @@ def symbolic_equal(a, b):
         pass
 
     return False
+
+def symbolic_equal(a, b, timeout=5):
+    """
+    Compare two symbolic expressions with a timeout.
+    
+    Args:
+        a: First expression
+        b: Second expression
+        timeout: Maximum time in seconds to wait for comparison
+        
+    Returns:
+        bool: True if expressions are equal, False otherwise or if timeout occurs
+    """
+    # Create a process pool with 1 worker
+    pool = multiprocessing.Pool(1)
+    
+    try:
+        # Apply the worker function asynchronously with a timeout
+        result = pool.apply_async(_symbolic_equal_worker, (a, b))
+        # Get the result with timeout
+        return result.get(timeout=timeout)
+    except multiprocessing.TimeoutError:
+        # If timeout occurs, terminate the pool and return False
+        pool.terminate()
+        return False
+    except Exception as e:
+        print(f"Error during comparison: {e}")
+        return False
+    finally:
+        pool.close()
+        pool.join()
+        
+
+if __name__ == "__main__":
+    print(math_equal('2^{200!}-2', '100'))

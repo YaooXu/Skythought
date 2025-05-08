@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import regex as re
 
-
+os.environ['HF_HOME']='mnt/workspace/user/sunwangtao/.cache/huggingface'
 def deduplicate(content):
     # idx = content.rfind('. ')
     # content = content[:idx + 1] if idx != -1 else content
@@ -70,30 +70,24 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
                 # print(f"⚠️ Sample {idx} has no correct responses.")
                 continue
             
-            avg_prefix = int(np.mean(correct_lengths)) if len(correct_lengths) > 0 else 5000
-            
+            prefix = int(np.mean(correct_lengths)) if len(correct_lengths) > 0 else 16384
+
             for i in range(len(responses)):
                 if i >= len(token_usages) or i >= len(activation_files):
                     continue
                 
-                # # 忽略 exceed 情况
-                # if token_usages[i].get("completion_tokens", 0) == 16384:
-                #     continue
-
                 # correctness = responses[i].get("correctness", False)
                 # key = "correct" if correctness else "wrong"
                 
                 exceed = token_usages[i].get("completion_tokens", 0) == 16384
                 key = "exceed" if exceed else "nomal"
                 
-                # prefix = 16384
-                # if exceed:
-                #     output_text = deduplicate(responses[i]['content'])
-                #     prefix = len(tokenizer.encode(output_text, add_special_tokens=False))
-                #     if prefix == 16384:
-                #         print(output_text)
-                    
-                prefix = avg_prefix
+                if exceed:
+                    # print(prefix)
+                    output_text = deduplicate(responses[i]['content'])
+                    prefix = min(prefix, len(tokenizer.encode(output_text, add_special_tokens=False)))
+                    # print(prefix)
+                    # print('\n\n')
                 try:
                     result = extract_activation(activation_files[i])
                 except Exception as e:
@@ -111,23 +105,11 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
                         
                         layer_metrics.append(np.std(values))
                         # layer_metrics.append(np.mean(diffs))
-                        
-                        # # --- IQR 离群检测 ---
-                        # Q1 = np.percentile(values, 25)
-                        # Q3 = np.percentile(values, 75)
-                        # IQR = Q3 - Q1
-                        # upper = Q3 + 4 * IQR
-                        # outliers = values > upper
-                        # ratio = np.sum(outliers) / len(values)
-
-                        # # --- 保存离群比例作为该层 metric ---
-                        # layer_metrics.append(ratio)
                             
                     elif metric == "delta_norms":
                         values = result[layer]['delta_norms']
                         
-                        rel_values = result[layer]['delta_norms'] / result[layer]['activations_norm'][:-1]
-                        # values = np.sort(rel_values)[-50:]
+                        rel_values = result[layer]['relative_deltas']
                         
                         layer_metrics.append(np.mean(rel_values[:prefix]))
     
@@ -144,64 +126,93 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
     metric_data = get_metric(predictions, metric)
 
     # 画图
-
-    # plt.figure(figsize=(10, 6))
-    # for key in keys:
-    #     if not metric_data[key]:
-    #         continue
-    #     data = np.array(metric_data[key])
-    #     mean = data.mean(axis=0)
-    #     std = data.std(axis=0)
-    #     plt.plot(mean, label=f'{key} (mean)')
-    #     plt.fill_between(range(len(mean)), mean - std, mean + std, alpha=0.3)
-
-    # plt.title(f'{metric.capitalize()} by Layer (Correct vs Wrong)')
-    # plt.xlabel('Layer')
-    # plt.ylabel(metric)
-    # plt.legend()
-    # plt.grid(True)
-
-    # save_path = f"single_model_{metric}_diff.png"
-    # plt.savefig(save_path)
-    # plt.show()
-    # print(f"✅ 图像已保存: {save_path}")
-    # plt.close()
-
-    # 画图：correct - wrong 的差异
-    plt.figure(figsize=(10, 6))
-
     exceed_data = np.array(metric_data[keys[0]])
     normal_data = np.array(metric_data[keys[1]])
-    
-    print('normal: ', normal_data.mean(axis=0).mean())
-    print('exceed: ', exceed_data.mean(axis=0).mean())
-    print(normal_data.mean(axis=0).mean() - exceed_data.mean(axis=0).mean())
-    all_data = np.concatenate([exceed_data, normal_data], axis=0)
-    print(all_data.mean(axis=0).mean())
-    
-    if len(exceed_data) == 0 or len(normal_data) == 0:
-        print("⚠️ 缺少 correct 或 wrong 样本，跳过绘图")
+
+    # 计算每个样本在所有层上的均值 (shape: [n_samples,])
+    exceed_means = exceed_data.mean(axis=1)  # 沿层方向求均值
+    normal_means = normal_data.mean(axis=1)
+
+    all_means = np.concatenate([exceed_means, normal_means])
+    print(f'All (mean over layers): {all_means.mean():.4f}')
+
+    # 打印统计信息
+    print(f'Normal (mean over layers): {normal_means.mean():.4f}')
+    print(f'Exceed (mean over layers): {exceed_means.mean():.4f}')
+    print(f'Mean diff (Normal - Exceed): {normal_means.mean() - exceed_means.mean():.4f}')
+
+    if len(exceed_means) == 0 or len(normal_means) == 0:
+        print("⚠️ 缺少 exceed 或 normal 样本，跳过绘图")
         return
 
-    correct_mean = exceed_data.mean(axis=0)
-    wrong_mean = normal_data.mean(axis=0)
-    diff_mean = wrong_mean - correct_mean
-    # 可选：不稳定性带
-    correct_std = exceed_data.std(axis=0)
-    wrong_std = normal_data.std(axis=0)
-    diff_std = np.sqrt(correct_std ** 2 + wrong_std ** 2)  # 差值 std 上界估计
+    # # ---------- 新增：从 normal 中随机选取与 exceed 相同数量的样本 ----------
+    # n_exceed = len(exceed_means)
+    # if n_exceed < len(normal_means):
+    #     # 随机选取（不重复抽样）
+    #     random_normal_means = np.random.choice(normal_means, size=n_exceed, replace=False)
+    # else:
+    #     # 如果 exceed 样本数比 normal 多，则全部选取（避免报错）
+    #     random_normal_means = normal_means.copy()
 
-    plt.plot(diff_mean, label=f'{keys[0]} - {keys[1]} (mean diff)', color='blue')
-    plt.fill_between(range(len(diff_mean)), diff_mean - diff_std, diff_mean + diff_std,
-                    color='blue', alpha=0.2, label='Std of diff (approx upper bound)')
 
-    plt.axhline(0, color='gray', linestyle='--')
-    plt.title(f'{metric} Difference by Layer: Normal - Exceed')
-    plt.xlabel('Layer')
-    plt.ylabel(f'Delta {metric}')
-    plt.legend()
-    plt.grid(True)
+    # ---------- 绘制箱线图 ----------
+    plt.figure(figsize=(3, 4.5))  # 保持较窄的宽度
 
+    # 三组数据：exceed, normal (full), normal (random subset)
+    box_data = [exceed_means, normal_means, all_means]
+    labels = [
+        f'Exceed',
+        f'Normal',
+        f'All'
+    ]
+
+    # 关键修改：调整positions参数减少箱线间距
+    positions = [1, 1.8, 2.6]  # 原始默认是[1,2,3]，这里缩小间距
+
+    # 计算各组平均数
+    means = [np.mean(data) for data in box_data]
+
+    # 画箱线图
+    boxplot = plt.boxplot(
+        box_data,
+        positions=positions,  # 使用自定义位置
+        labels=labels,
+        patch_artist=True,
+        widths=0.5,  # 保持较窄的箱体宽度
+        showmeans=True,
+        meanline=True,
+        meanprops={'linestyle': '--', 'linewidth': 1.5, 'color': 'darkred'},
+        medianprops={'color': 'black', 'linewidth': 1.5},
+        showfliers=False,
+    )
+
+    # 自定义颜色
+    colors = ['lightcoral', 'lightgreen', 'lightblue']
+    for patch, color in zip(boxplot['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+
+    # 添加平均数标注
+    # for pos, mean in zip(positions, means):
+    #     plt.text(pos, mean+0.05*(plt.ylim()[1]-plt.ylim()[0]),  # 位置稍微上移
+    #             f'{mean:.2f}', 
+    #             ha='center', va='bottom',
+    #             fontsize=8,
+    #             bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'))
+
+    plt.title(f'Mean {metric} over Layers:\nExceed vs Normal',  # 缩短标题
+            fontsize=10, pad=10)
+    plt.ylabel(f'Mean {metric} (over layers)', fontsize=9)
+    plt.xticks(positions, labels, fontsize=8)  # 确保标签对应新位置
+    plt.yticks(fontsize=8)
+    plt.ylim(0.72, 0.84)
+    plt.grid(axis='y', linestyle=':', alpha=0.5)
+
+    # 调整x轴范围使图形更紧凑
+    plt.xlim(positions[0]-0.5, positions[-1]+0.5)
+
+    plt.tight_layout()
+    plt.savefig('boxplot_comparison.pdf', bbox_inches='tight', dpi=300)
     plt.show()
 
 # 示例调用
@@ -213,12 +224,11 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", trust_remo
 # metric = 'activations_norm'
 metric = 'delta_norms' 
 pred_files = [
-    # '/global_data/pretrain/xuyao/SkyThought/merged_predictions-lora-64.json',
-    # '/global_data/pretrain/xuyao/SkyThought/merged_predictions-lora-128.json',
-    # '/global_data/pretrain/xuyao/SkyThought/merged_predictions-full.json',
-    # '/global_data/pretrain/xuyao/SkyThought/merged_predictions-shift-v3.5-abl2.json',
-    '/global_data/pretrain/xuyao/SkyThought/merged_predictions-full-olympiadbench.json',
-    
+    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt-math500.json',
+    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-128_complete_ckpt-math500.json',
+    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_full_sft_math_long_cot_20k-math500.json',
+    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-64-shift_gate_v2cat_scale_glu_relu-64_complete_ckpt-math500.json',
+    # '/mnt/workspace/user/sunwangtao/Skythought/h-merged_predictions-save_qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt-math500.json'
 ]
 
 for pred_file in pred_files:

@@ -133,7 +133,7 @@ def fetch_responses_ray(
     engine_cfg = init_engine_from_config(config)
     ds = ray.data.from_items([(idx, conv) for idx, conv in enumerate(conversations)])
     num_replicas = config["env_config"].get("num_replicas", 1)
-    if ds.count() < config["env_config"].get("batch_size", 1):
+    if ds.count() < config["env_config"].get("batch_size", 1) * num_replicas:
         config["env_config"]["batch_size"] = math.ceil(ds.count() / num_replicas)
     if num_replicas > 1 and num_replicas > ds.num_blocks():
         ds = ds.repartition(num_partitions=num_replicas)
@@ -172,7 +172,8 @@ def factory(idx, model_id):
         gate_up[:, : i // 2] = torch.nn.SiLU()(gate_up[:, : i // 2])
         activation = gate_up[:, : i // 2] #  l, i
         if gate_up.shape[0] == 1:
-            layer_activation[idx].append(activation.cpu().float().detach())
+            # layer_activation[idx].append(activation.cpu().float().detach())
+            layer_activation[idx].append(x.cpu().float().detach())
         x = gate_up[:, : i // 2] * gate_up[:, i // 2 :]
         x, _ = self.down_proj(x)
         return x
@@ -187,14 +188,12 @@ def factory(idx, model_id):
             cur_x = x
             
             x_shift = self.last_x
+
             self.last_x = cur_x
         
-        alpha = F.sigmoid(self.scale(torch.concat([x_shift, x_shift], dim=-1))[0])
-        
-        shift_gate = self.W(self.R(torch.concat([x_shift, x_shift], dim=-1))[0])[0] * alpha
-        
-        ori_gate = self.gate_proj(x)[0]
-        final_gate = ori_gate + shift_gate
+        alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
+        conv_x = x + self.W(self.R(x_shift)[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_x)[0]
         
         if length == 1:
             layer_activation[idx].append(self.act_fn(final_gate).cpu().float().detach())
@@ -220,7 +219,7 @@ def create_temp_pkl_name(model_id):
     os.makedirs(temp_dir, exist_ok=True)
     
     # 生成最终的 .pkl 文件路径（例如：./tmp/20240331_153022-model123.pkl）
-    temp_pkl_path = os.path.join(temp_dir, f"{timestamp}-{model_id.replace('/', '-')}.pkl")
+    temp_pkl_path = os.path.join(temp_dir, f"{timestamp}-{os.environ['CUDA_VISIBLE_DEVICES']}-{model_id.replace('/', '-')}.pkl")
     
     return temp_pkl_path
 
@@ -262,25 +261,25 @@ def inference(
         batch_size = kwargs.get("batch_size", 1)
         assert batch_size == 1
         
-        conversations = conversations
+        conversations = conversations[:10]
         
         engine_kwargs = copy.deepcopy(backend_params.to_dict())
         engine_kwargs["model"] = model_config.model_id
         llm = LLM(enforce_eager=True, **engine_kwargs)
 
-        # num_layers = llm.llm_engine.model_config.hf_config.num_hidden_layers
+        num_layers = llm.llm_engine.model_config.hf_config.num_hidden_layers
         
-        # zip_file_path = create_temp_pkl_name(model_config.model_id)
+        zip_file_path = create_temp_pkl_name(model_config.model_id)
         
-        # for i in range(num_layers):
-        #     obj = llm.llm_engine.model_executor.driver_worker.worker.model_runner.model.model.layers[i].mlp
-        #     obj.forward = MethodType(factory(i, model_config.model_id), obj)
+        for i in range(num_layers):
+            obj = llm.llm_engine.model_executor.driver_worker.worker.model_runner.model.model.layers[i].mlp
+            obj.forward = MethodType(factory(i, model_config.model_id), obj)
         
         response_in_batches = []
         for i in range(0, len(conversations), batch_size):
             
-            # global layer_activation
-            # layer_activation.clear()
+            global layer_activation
+            layer_activation.clear()
             
             response_batch = llm.chat(
                 messages=conversations[i : i + batch_size],
@@ -289,36 +288,38 @@ def inference(
                 add_generation_prompt=model_config.assistant_prefill is None,
                 continue_final_message=model_config.assistant_prefill is not None,
                 )
-            # layer_activation_changes = dict()
-            # for layer in layer_activation:
-            #     activations = torch.stack(layer_activation[layer]).squeeze(1)
-            #     activations_norm = torch.norm(activations, p=2, dim=1)  # shape=(1024,)
+
+            layer_activation_changes = dict()
+            for layer in layer_activation:
+                activations = torch.stack(layer_activation[layer]).squeeze(1)
+                activations_norm = torch.norm(activations, p=2, dim=1)  # shape=(1024,)
                 
-            #     deltas = activations[1:] - activations[:-1]
+                deltas = activations[1:] - activations[:-1]
                 
-            #     delta_norms = torch.norm(deltas, p=2, dim=1)  # shape=(1023,)
+                delta_norms = torch.norm(deltas, p=2, dim=1)  # shape=(1023,)
                 
-            #     z_delta = torch.norm(activations[0] - activations[-1], p=2)
+                # z_delta = torch.norm(activations[0] - activations[-1], p=2)
                 
-            #     prev_norms = torch.norm(activations[:-1], p=2, dim=1)  # shape=(1023,)
-            #     relative_deltas = delta_norms / prev_norms  # shape=(1023,)
+                prev_norms = torch.norm(activations[:-1], p=2, dim=1)  # shape=(1023,)
+                relative_deltas = delta_norms / prev_norms  # shape=(1023,)
                 
-            #     cos_sims = F.cosine_similarity(activations[1:], activations[:-1], dim=1)
+                # cos_sims = F.cosine_similarity(activations[1:], activations[:-1], dim=1)
                 
-            #     z_cos_sim = F.cosine_similarity(activations[0].unsqueeze(0), activations[-1].unsqueeze(0), dim=-1)
+                # z_cos_sim = F.cosine_similarity(activations[0].unsqueeze(0), activations[-1].unsqueeze(0), dim=-1)
                 
-            #     layer_activation_changes[layer] = {
-            #         "activations_norm": activations_norm.cpu().float().detach().numpy(),
-            #         "delta_norms": delta_norms.cpu().float().detach().numpy(),
-            #         "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
-            #         "cos_sims": cos_sims.cpu().float().detach().numpy(),
-            #         "z_delta": z_delta.cpu().float().detach().numpy(),
-            #         "z_cos_sim": z_cos_sim.cpu().float().detach().numpy(),
-            #     }
-                
-            # with zipfile.ZipFile(zip_file_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
-            #     serialized_dict = pickle.dumps(layer_activation_changes)
-            #     zipf.writestr(str(i), serialized_dict)
+                layer_activation_changes[layer] = {
+                    "activations_norm": activations_norm.cpu().float().detach().numpy(),
+                    "delta_norms": delta_norms.cpu().float().detach().numpy(),
+                    "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
+                    # "cos_sims": cos_sims.cpu().float().detach().numpy(),
+                    # "z_delta": z_delta.cpu().float().detach().numpy(),
+                    # "z_cos_sim": z_cos_sim.cpu().float().detach().numpy(),
+                }
+            
+            print(zip_file_path, i)
+            with zipfile.ZipFile(zip_file_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
+                serialized_dict = pickle.dumps(layer_activation_changes)
+                zipf.writestr(str(i), serialized_dict)
                             
             response_in_batches.append(response_batch)
             
@@ -327,8 +328,8 @@ def inference(
             responses.extend(response_batch)
         responses = [Response.from_vllm_response(response) for response in responses]
         
-        # for i, response in enumerate(responses):
-        #     response.activation_file = (zip_file_path, str(i))
+        for i, response in enumerate(responses):
+            response.activation_file = (zip_file_path, str(i))
             
     else:
         raise ValueError(f"Invalid backend: {backend}")
@@ -450,56 +451,56 @@ def score_responses(
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_info = {}
-        # for unique_id, record in id_to_results.items():
-        #     for i in range(N):
-        #         print(i)
-        #         content = record["responses"][i]["content"]
-        #         future = executor.submit(handler.update_results, record, content)
-        #         # track which problem and which response index
-        #         future_to_info[future] = (unique_id, i)
-
-        # for future in tqdm(as_completed(future_to_info), total=len(future_to_info)):
-        #     unique_id, i = future_to_info[future]
-        #     new_response_entry = future.result()
-
-        #     # Update correctness and reason in the original results dict
-        #     id_to_results[unique_id]["responses"][i]["correctness"] = (
-        #         new_response_entry["correctness"]
-        #     )
-        #     id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
-        #         "reason"
-        #     ]
-
-        #     # Track scores separately for metrics like pass@k
-        #     # TODO (sumanthrh): this can be improved
-        #     if unique_id not in id_to_scores:
-        #         id_to_scores[unique_id] = [0 for _ in range(N)]
-        #     id_to_scores[unique_id][i] = new_response_entry["correctness"]
-
-        #     total_correct += new_response_entry["correctness"]
-        #     total_finish += 1
-        
-        for unique_id, record in tqdm(id_to_results.items()):
+        for unique_id, record in id_to_results.items():
             for i in range(N):
                 content = record["responses"][i]["content"]
+                future = executor.submit(handler.update_results, record, content)
+                # track which problem and which response index
+                future_to_info[future] = (unique_id, i)
 
-                new_response_entry = handler.update_results(record, content)
+        for future in tqdm(as_completed(future_to_info), total=len(future_to_info)):
+            unique_id, i = future_to_info[future]
+            new_response_entry = future.result()
 
-                # Update correctness and reason in the original results dict
-                id_to_results[unique_id]["responses"][i]["correctness"] = (
-                    new_response_entry["correctness"]
-                )
-                id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
-                    "reason"
-                ]
+            # Update correctness and reason in the original results dict
+            id_to_results[unique_id]["responses"][i]["correctness"] = (
+                new_response_entry["correctness"]
+            )
+            id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
+                "reason"
+            ]
 
-                # Track scores separately for metrics like pass@k
-                if unique_id not in id_to_scores:
-                    id_to_scores[unique_id] = [0 for _ in range(N)]
-                id_to_scores[unique_id][i] = new_response_entry["correctness"]
+            # Track scores separately for metrics like pass@k
+            # TODO (sumanthrh): this can be improved
+            if unique_id not in id_to_scores:
+                id_to_scores[unique_id] = [0 for _ in range(N)]
+            id_to_scores[unique_id][i] = new_response_entry["correctness"]
 
-                total_correct += new_response_entry["correctness"]
-                total_finish += 1
+            total_correct += new_response_entry["correctness"]
+            total_finish += 1
+        
+    # for unique_id, record in tqdm(id_to_results.items()):
+    #     for i in range(N):
+    #         content = record["responses"][i]["content"]
+
+    #         new_response_entry = handler.update_results(record, content)
+
+    #         # Update correctness and reason in the original results dict
+    #         id_to_results[unique_id]["responses"][i]["correctness"] = (
+    #             new_response_entry["correctness"]
+    #         )
+    #         id_to_results[unique_id]["responses"][i]["reason"] = new_response_entry[
+    #             "reason"
+    #         ]
+
+    #         # Track scores separately for metrics like pass@k
+    #         if unique_id not in id_to_scores:
+    #             id_to_scores[unique_id] = [0 for _ in range(N)]
+    #         id_to_scores[unique_id][i] = new_response_entry["correctness"]
+
+    #         total_correct += new_response_entry["correctness"]
+    #         total_finish += 1
+            
 
     accuracy = round(total_correct / total_finish, 4) if total_finish else 0
     return accuracy, id_to_scores, total_finish

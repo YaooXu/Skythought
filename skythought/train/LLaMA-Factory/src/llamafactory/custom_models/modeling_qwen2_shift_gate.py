@@ -289,7 +289,7 @@ class Qwen2MLP_shift(nn.Module):
             self.W = nn.Linear(rank, self.hidden_size, bias=False)
             self.scale = nn.Linear(2 * self.hidden_size, 1, bias=False)
 
-        elif self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu'): # 4
+        elif self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu', 'v3cat_scale_glu_relu', 'v4cat_scale_glu_relu'): # 4
             self.R = nn.Linear(self.hidden_size, rank, bias=False)
             self.W = nn.Linear(rank, self.hidden_size, bias=False)
             self.scale = nn.Linear(2 * self.hidden_size, rank, bias=False)
@@ -464,6 +464,24 @@ class Qwen2MLP_shift(nn.Module):
                 conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
                 
                 final_gate = self.gate_proj(conv_hidden_state)
+
+            elif self.shift_version in ('v3cat_scale_glu_relu'):
+                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
+
+                alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
+                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
+                
+                final_gate = self.gate_proj(conv_hidden_state)
+                hidden_state = conv_hidden_state
+
+            elif self.shift_version in ('v4cat_scale_glu_relu'):
+                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
+
+                alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
+                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
+                
+                final_gate = self.gate_proj(hidden_state)
+                hidden_state = conv_hidden_state
 
             elif self.shift_version in ('v2cat_glu',):
                 alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))

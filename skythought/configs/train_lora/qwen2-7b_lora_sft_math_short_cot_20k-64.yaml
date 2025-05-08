@@ -8,6 +8,8 @@ finetuning_type: lora
 lora_target: all
 lora_rank: 64
 flash_attn: fa2
+deepspeed: configs/deepspeed/ds_z0_config.json
+
 
 ### dataset
 dataset_dir: train/LLaMA-Factory/data

@@ -401,6 +401,7 @@ def math_equal(
     1. numerical equal: both can convert to float and are equal
     2. symbolic equal: both can convert to sympy expression and are equal
     """
+    print(prediction, reference)
     if prediction is None or reference is None:
         return False
     if str(prediction.strip().lower()) == str(reference.strip().lower()):
@@ -605,7 +606,7 @@ def symbolic_equal(a, b):
     b = _parse(b)
 
     if not is_valid_exponential(a):
-        # 9**(10**69)
+        print(a, b)
         return False
 
     # direct equal
@@ -649,7 +650,4 @@ def symbolic_equal(a, b):
     return False
 
 
-pred = '9^{10^{69}}'
-answer = '100'
-
-a = math_equal(pred, answer)
+math_equal('2^{200!}-2', '100')

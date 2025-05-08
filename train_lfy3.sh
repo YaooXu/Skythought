@@ -25,22 +25,22 @@ export CHECKPOINT_SAVE='./save'
 tasks=(
     "math500|4"
     "olympiadbench_math_en|4"
-    "aime24|32"
-    "aime25|32"
-    "amc23|32"
+    "aime24|16"
+    "aime25|16"
+    "amc23|16"
 
-    "aime24|128"
-    "aime25|128"
-    "amc23|128"
-    "math500|128"
-    "olympiadbench_math_en|128"
+    # "aime24|128"
+    # "aime25|128"
+    # "amc23|128"
+    # "math500|128"
+    # "olympiadbench_math_en|128"
 
 )
 
+len=32768
+
 # base model
 train_configs=(
-    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_40k.yaml" # exist
-    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k.yaml" # exist
 )
 
 for config_path in "${train_configs[@]}"; do
@@ -90,16 +90,17 @@ for config_path in "${train_configs[@]}"; do
             --task "$task_name" \
             --backend ray \
             --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-            --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
             --n=$n \
-            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
     done
 done
 
 
 # shift model
 shift_versions=(
-    v2cat_scale_glu_relu
+    # v2cat_scale_glu_relu
+    v3cat_scale_glu_relu
 )
 
 train_configs=(
@@ -161,9 +162,9 @@ for config_item in "${train_configs[@]}"; do
                 --task "$task_name" \
                 --backend ray \
                 --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-                --sampling-params temperature=0.6,top_p=0.95,max_tokens=16384 \
+                --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
                 --n=$n \
-                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part/$task_name"
+                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
         done
     done
 done

@@ -3,7 +3,7 @@ accelerator_type: null  # accelerator name as specified here: https://docs.ray.i
 engine_kwargs: # vllm engine kwargs 
   tensor_parallel_size: 1
   gpu_memory_utilization: 0.9
-  max_model_len: 16384
+  max_model_len: 32768
   dtype: auto
   # other optional vllm engine kwargs to tune performance!
   # pipeline_parallel_size: 1
@@ -22,4 +22,4 @@ runtime_env:
     VLLM_ATTENTION_BACKEND: "FLASH_ATTN"
 env_config:
   num_replicas: 8  # number of vllm replicas 
-  batch_size: 32 # ray pipeline internal batch size (used for map_batches call internally). Should usually be set to a value in [64, 128, 256] for best performance.
+  batch_size: 8 # ray pipeline internal batch size (used for map_batches call internally). Should usually be set to a value in [64, 128, 256] for best performance.

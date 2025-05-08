@@ -5,7 +5,7 @@ import re
 
 def is_deduplicate(content):
 
-    i = 50
+    i = 64
     
     postfix = content[-i:]
     
@@ -21,7 +21,7 @@ def is_deduplicate(content):
         print(postfix, count)
         print('---' * 10)
         
-    return count >= 5
+    return count >= 4
     
 def get_token_length(text):
     # 简单按空格分词统计（你也可以接入 tokenizer）
@@ -53,6 +53,9 @@ def process_folder(folder_path):
     total_wrong = 0
     exceed_in_wrong = 0
 
+    correct_over_16k = 0
+    over_16k = 0
+
     for key in results:
         prediction = results[key]
         responses = prediction['responses']
@@ -63,6 +66,11 @@ def process_folder(folder_path):
             length = token_usage['completion_tokens'] + token_usage['prompt_tokens']
             correctness = response.get('correctness', False)
 
+            if length > 16384:
+                over_16k += 1
+                if correctness:
+                    correct_over_16k += 1
+                
             if not correctness:
                 total_wrong += 1
                 if length in [16385, 32769]:
@@ -78,6 +86,8 @@ def process_folder(folder_path):
     proportion_wrong = exceed_in_wrong / total_wrong
     duplicate = duplicate / total
 
+    correct_over_16k = correct_over_16k / total
+
     # 加入 summary.json 中
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
@@ -85,6 +95,7 @@ def process_folder(folder_path):
     summary["exceed_in_total"] = proportion_all
     summary['exceed_in_wrong'] = proportion_wrong
     summary['duplicate'] = duplicate
+    summary['correct_over_16k'] = correct_over_16k
     
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
@@ -177,7 +188,7 @@ def generate_markdown_table(accuracy_data, datasets, models):
     return markdown
 
 def main():
-    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-20k"  # 当前目录，可以根据需要修改
+    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-20k-32768-n64"  # 当前目录，可以根据需要修改
     # root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.7"  # 当前目录，可以根据需要修改
     # root_dir = '/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.6-tp95-n128'
 

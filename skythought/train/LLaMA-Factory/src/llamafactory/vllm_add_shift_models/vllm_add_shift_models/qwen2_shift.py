@@ -423,7 +423,7 @@ class Qwen2MLP(nn.Module):
                 prefix=f"{prefix}.shift_weight",
             )
 
-        if self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu'):
+        if self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu', 'v3cat_scale_glu_relu', 'v4cat_scale_glu_relu'):
             self.R = RowParallelLinear(
                 hidden_size,
                 rank,
@@ -596,6 +596,10 @@ class Qwen2MLP(nn.Module):
             self.get_final_gate = self.get_final_gate_v2cat_scale
         elif self.shift_version == "v2cat_scale_glu_relu":
             self.get_final_gate = self.get_final_gate_v2cat_scale_glu_relu
+        elif self.shift_version == "v3cat_scale_glu_relu":
+            self.get_final_gate = self.get_final_gate_v3cat_scale_glu_relu
+        elif self.shift_version == "v4cat_scale_glu_relu":
+            self.get_final_gate = self.get_final_gate_v4cat_scale_glu_relu
         elif self.shift_version == "v2cat_scale_glu":
             self.get_final_gate = self.get_final_gate_v2cat_scale_glu
         elif self.shift_version == "v2cat_glu":
@@ -637,97 +641,103 @@ class Qwen2MLP(nn.Module):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         shift_gate = self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])[0] * alpha
         ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate
+        return ori_gate + shift_gate, hidden_states
 
     def get_final_gate_v4cat_scale(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         shift_gate = self.W(self.R(prev_hidden_states)[0])[0] * alpha
         ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate
+        return ori_gate + shift_gate, hidden_states
 
     def get_final_gate_v2cat(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])[0] * alpha
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v2cat_scale(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v2cat_scale_glu(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v2cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
         alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
+    def get_final_gate_v3cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
+        alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_hidden_states)[0]
+        return final_gate, conv_hidden_states
+
+    def get_final_gate_v4cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
+        alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
+        final_gate = self.gate_proj(hidden_states)[0]
+        return final_gate, conv_hidden_states
+        
     def get_final_gate_v2cat_glu(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v2cat_glu_silu(self, hidden_states, prev_hidden_states):
         alpha = self.act_fn(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v4sub(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(hidden_states - prev_hidden_states)[0])
         shift_gate = self.W(self.R(hidden_states - prev_hidden_states)[0])[0] * alpha
         ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate
+        return ori_gate + shift_gate, hidden_states
 
     def get_final_gate_v2sub(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(hidden_states - prev_hidden_states)[0])
         conv_hidden_states = hidden_states + self.W(self.R(hidden_states - prev_hidden_states)[0])[0] * alpha
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v4pre(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
         shift_gate = self.W(self.R(prev_hidden_states)[0])[0] * alpha
         ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate
+        return ori_gate + shift_gate, hidden_states
 
     def get_final_gate_v4pre_glu(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
         shift_gate = self.W(self.R(prev_hidden_states)[0] * alpha )[0]
         ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate
+        return ori_gate + shift_gate, hidden_states
 
     def get_final_gate_v2pre(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v2pre_glu(self, hidden_states, prev_hidden_states):
         alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def get_final_gate_v2pre_glu_relu(self, hidden_states, prev_hidden_states):
         alpha = F.relu(self.scale(prev_hidden_states)[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
         final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
-
-
-    def get_final_gate_v2pre_sae(self, hidden_states, prev_hidden_states):
-        conv_hidden_states = hidden_states + self.W(self.act_fn(self.R(prev_hidden_states)[0]))[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate
+        return final_gate, hidden_states
 
     def forward(self, hidden_states, attn_metadata, last_kv_cache, last_kv_indices):
         """
@@ -763,7 +773,7 @@ class Qwen2MLP(nn.Module):
 
             last_kv_cache[last_token_indices] = decode_hidden
 
-        final_gate = self.get_final_gate(hidden_states, prev_hidden_states)
+        final_gate, hidden_states = self.get_final_gate(hidden_states, prev_hidden_states)
         
         up, _ = self.up_proj(hidden_states)
         hidden_states = self.act_fn(final_gate) * up
