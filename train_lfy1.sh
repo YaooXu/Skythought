@@ -26,10 +26,10 @@ len=32768
 # Evaluation tasks
 tasks=(
     "math500|4"
-    "olympiadbench_math_en|4"
-    "aime24|16"
-    "aime25|16"
-    "amc23|16"
+    "olympiadbench_math_en|64"
+    "aime24|64"
+    "aime25|64"
+    "amc23|64"
 
     # "aime24|128"
     # "aime25|128"
@@ -102,7 +102,7 @@ done
 
 # shift model
 shift_versions=(
-    v2cat_scale_glu_relu
+    # v2cat_scale_glu_relu
     v3cat_scale_glu_relu
 )
 

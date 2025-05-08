@@ -24,10 +24,10 @@ export CHECKPOINT_SAVE='./save'
 # Evaluation tasks
 tasks=(
     "math500|4"
-    "olympiadbench_math_en|4"
-    "aime24|16"
-    "aime25|16"
-    "amc23|16"
+    "olympiadbench_math_en|64"
+    "aime24|64"
+    "aime25|64"
+    "amc23|64"
 
     # "aime24|128"
     # "aime25|128"
@@ -104,7 +104,7 @@ shift_versions=(
 )
 
 train_configs=(
-    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|512"
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|256"
 )
 
 # 遍历每个配置

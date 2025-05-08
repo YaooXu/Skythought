@@ -24,10 +24,10 @@ export CHECKPOINT_SAVE='./save'
 # Evaluation tasks
 tasks=(
     "math500|4"
-    "olympiadbench_math_en|4"
-    "aime24|16"
-    "aime25|16"
-    "amc23|16"
+    "olympiadbench_math_en|64"
+    "aime24|64"
+    "aime25|64"
+    "amc23|64"
 
     # "aime24|128"
     # "aime25|128"
@@ -42,8 +42,9 @@ len=32768
 # base model
 train_configs=(
     "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_40k.yaml" # done
-    # "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-296.yaml" # done
     "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_40k-256.yaml" # done
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-296.yaml" # done
+    "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_40k-296.yaml"
     # "configs/train_lora_lfy/qwen2-7b_lora_sft_math_long_cot_80k-256-gate1.6.yaml"
 )
 
