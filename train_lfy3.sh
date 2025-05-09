@@ -104,7 +104,6 @@ shift_versions=(
 
 train_configs=(
     "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|256"
-    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|512"
 )
 
 # 遍历每个配置
@@ -138,16 +137,16 @@ for config_item in "${train_configs[@]}"; do
             output_path="$output_path/complete_ckpt"
         fi
 
-        # Check if output directory exists
-        if [ ! -d "$output_path" ]; then
-            echo "Directory $output_path doesn't exist. Starting training..."
-            
+        if [ ! -f "$output_path/config.json" ]; then
+            echo "File $output_path/config.json doesn't exist. Starting training..."
+
             export HF_ENDPOINT=https://hf-mirror.com
             FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
 
         else
-            echo "Directory $output_path exists. Skipping training."
+            echo "File $output_path/config.json exists. Skipping training."
         fi
+
 
         # 执行评估
         for task_str in "${tasks[@]}"; do
