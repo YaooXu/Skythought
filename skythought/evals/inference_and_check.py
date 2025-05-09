@@ -537,6 +537,13 @@ def generate_and_score(
 
     print(f"Generated {len(id_to_results)} responses")
 
+    rank = int(os.environ.get("RANK", 0))
+    if rank == 0:
+        save_results(result_file, id_to_results)
+        logger.info(f"Saved results to {result_file}")
+        
+    return
+
     accuracy, id_to_scores, total_finish = score_responses(
         handler, id_to_results, max_workers=8
     )

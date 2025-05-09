@@ -24,10 +24,10 @@ export CHECKPOINT_SAVE='./save'
 # Evaluation tasks
 tasks=(
     "math500|4"
-    "olympiadbench_math_en|64"
-    "aime24|64"
-    "aime25|64"
-    "amc23|64"
+    "olympiadbench_math_en|4"
+    "aime24|32"
+    "aime25|32"
+    "amc23|32"
 
     # "aime24|128"
     # "aime25|128"
@@ -66,15 +66,14 @@ for config_path in "${train_configs[@]}"; do
 
     echo "Output will be saved to: $output_path"
 
-    # Check if output directory exists
-    if [ ! -d "$output_path" ]; then
-        echo "Directory $output_path doesn't exist. Starting training..."
-        
+    if [ ! -f "$output_path/config.json" ]; then
+        echo "File $output_path/config.json doesn't exist. Starting training..."
+
         export HF_ENDPOINT=https://hf-mirror.com
         FORCE_TORCHRUN=1 /cpfs01/data/shared/Group-m6/fangyu.lfy/conda_env/sky/bin/llamafactory-cli train "$config_path"
 
     else
-        echo "Directory $output_path exists. Skipping training."
+        echo "File $output_path/config.json exists. Skipping training."
     fi
 
     # Run evaluation
@@ -105,6 +104,7 @@ shift_versions=(
 
 train_configs=(
     "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|256"
+    "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_80k-shift_gate.yaml|512"
 )
 
 # 遍历每个配置
