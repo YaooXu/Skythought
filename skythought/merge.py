@@ -34,9 +34,10 @@ def merge_predictions(prediction_files, output_file):
 
 # 示例调用
 task = 'math500'
-name = 'save_qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt'
+name = 'save_qwen2-7b_full_sft_math_long_cot_20k'
+# name = 'save_qwen2-7b_lora_sft_math_long_cot_20k-256-shift_gate_v3cat_scale_glu_relu-256'
 
-prediction_files = glob.glob(f'skythought/evaluate_results_n-temp0.6-tp95-h/{task}/**/*{name}*/results.json', recursive=True)
+prediction_files = glob.glob(f'skythought/evaluate_results_n-temp0.6-tp95-h-f50/{task}/**/*{name}*/results.json', recursive=True)
 
 print(prediction_files)
 

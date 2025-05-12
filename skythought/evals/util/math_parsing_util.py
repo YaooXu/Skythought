@@ -389,12 +389,11 @@ def str_to_pmatrix(input_str):
     return ", ".join(pmatrix_list)
 
 
-def math_equal(
+def _math_equal(
     prediction,
     reference,
     include_percentage: bool = True,
     is_close: bool = True,
-    timeout: bool = False,
 ) -> bool:
     """
     Exact match of math if and only if:
@@ -572,6 +571,31 @@ def math_equal(
 
     return False
 
+def math_equal(    
+    prediction,
+    reference,
+    include_percentage: bool = True,
+    is_close: bool = True,
+    timeout=5
+):
+    # Create a process pool with 1 worker
+    pool = multiprocessing.Pool(1)
+    
+    try:
+        # Apply the worker function asynchronously with a timeout
+        result = pool.apply_async(_math_equal, (prediction, reference, include_percentage, is_close))
+        # Get the result with timeout
+        return result.get(timeout=timeout)
+    except multiprocessing.TimeoutError:
+        # If timeout occurs, terminate the pool and return False
+        pool.terminate()
+        return False
+    except Exception as e:
+        print(f"Error during comparison: {e}")
+        return False
+    finally:
+        pool.close()
+        pool.join()
 
 def numeric_equal(prediction: float, reference: float):
     return isclose(reference, prediction, rel_tol=1e-4)
@@ -650,36 +674,17 @@ def _symbolic_equal_worker(a, b):
 
     return False
 
-def symbolic_equal(a, b, timeout=5):
+def symbolic_equal(a, b):
     """
-    Compare two symbolic expressions with a timeout.
+    Compare two symbolic expressions.
     
     Args:
         a: First expression
         b: Second expression
-        timeout: Maximum time in seconds to wait for comparison
-        
     Returns:
-        bool: True if expressions are equal, False otherwise or if timeout occurs
+        bool: True if expressions are equal, False otherwise
     """
-    # Create a process pool with 1 worker
-    pool = multiprocessing.Pool(1)
-    
-    try:
-        # Apply the worker function asynchronously with a timeout
-        result = pool.apply_async(_symbolic_equal_worker, (a, b))
-        # Get the result with timeout
-        return result.get(timeout=timeout)
-    except multiprocessing.TimeoutError:
-        # If timeout occurs, terminate the pool and return False
-        pool.terminate()
-        return False
-    except Exception as e:
-        print(f"Error during comparison: {e}")
-        return False
-    finally:
-        pool.close()
-        pool.join()
+    return _symbolic_equal_worker(a, b)
         
 
 if __name__ == "__main__":

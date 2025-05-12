@@ -192,11 +192,12 @@ def factory(idx, model_id):
             self.last_x = cur_x
         
         alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-        conv_x = x + self.W(self.R(x_shift)[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_x)[0]
+        x = x + self.W(self.R(x_shift)[0] * alpha)[0]
+        final_gate = self.gate_proj(x)[0]
         
         if length == 1:
-            layer_activation[idx].append(self.act_fn(final_gate).cpu().float().detach())
+            # layer_activation[idx].append(self.act_fn(final_gate).cpu().float().detach())
+            layer_activation[idx].append(x.cpu().float().detach())
             
         up, _ = self.up_proj(x)
         x = self.act_fn(final_gate) * up
@@ -261,7 +262,7 @@ def inference(
         batch_size = kwargs.get("batch_size", 1)
         assert batch_size == 1
         
-        conversations = conversations[:10]
+        conversations = conversations[:50]
         
         engine_kwargs = copy.deepcopy(backend_params.to_dict())
         engine_kwargs["model"] = model_config.model_id
@@ -537,12 +538,12 @@ def generate_and_score(
 
     print(f"Generated {len(id_to_results)} responses")
 
-    rank = int(os.environ.get("RANK", 0))
-    if rank == 0:
-        save_results(result_file, id_to_results)
-        logger.info(f"Saved results to {result_file}")
+    # rank = int(os.environ.get("RANK", 0))
+    # if rank == 0:
+    #     save_results(result_file, id_to_results)
+    #     logger.info(f"Saved results to {result_file}")
         
-    return
+    # return
 
     accuracy, id_to_scores, total_finish = score_responses(
         handler, id_to_results, max_workers=8

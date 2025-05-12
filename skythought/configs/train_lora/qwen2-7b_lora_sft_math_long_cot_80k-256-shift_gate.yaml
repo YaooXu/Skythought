@@ -10,6 +10,7 @@ lora_rank: 256
 flash_attn: fa2
 additional_target: R,W,scale
 shift_gate: true
+deepspeed: configs/deepspeed/ds_z0_config.json
 
 ### dataset
 dataset_dir: train/LLaMA-Factory/data

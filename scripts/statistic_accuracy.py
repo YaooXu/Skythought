@@ -4,27 +4,17 @@ from collections import defaultdict
 import re
 
 def is_deduplicate(content):
-
     i = 64
-    
     postfix = content[-i:]
-    
-    # 获取完整文本（字符串形式）
     full_text = content[:-i]
-    
-    # 计算这10个单词出现的总次数
     count = content.count(postfix)
-    
-    # 如果出现3次或更多，返回True
     
     if count >= 10:
         print(postfix, count)
         print('---' * 10)
-        
     return count >= 4
     
 def get_token_length(text):
-    # 简单按空格分词统计（你也可以接入 tokenizer）
     return len(text.strip().split())
 
 def process_folder(folder_path):
@@ -64,6 +54,7 @@ def process_folder(folder_path):
         for response, token_usage in zip(responses, token_usages):
             total += 1
             length = token_usage['completion_tokens'] + token_usage['prompt_tokens']
+            # length = token_usage['completion_tokens']
             correctness = response.get('correctness', False)
 
             if length > 16384:
@@ -73,10 +64,10 @@ def process_folder(folder_path):
                 
             if not correctness:
                 total_wrong += 1
-                if length in [16385, 32769]:
+                if length in [16384, 16385, 32769]:
                     exceed_in_wrong += 1
 
-            if length in [16385, 32769]:
+            if length in [16384, 16385, 32769]:
                 exceed += 1
             
             if is_deduplicate(response['content']):
@@ -100,12 +91,6 @@ def process_folder(folder_path):
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-    # return {
-    #     "folder": folder_path,
-    #     "exceed": exceed,
-    #     "total": total,
-    #     "ratio": proportion
-    # }
 
 
 def collect_accuracy_data(root_dir):
@@ -119,6 +104,9 @@ def collect_accuracy_data(root_dir):
     
     # 遍历目录结构
     for root, dirs, files in os.walk(root_dir):
+        if 'aime25' in root:
+            continue
+
         if 'summary.json' in files:
             # 解析路径信息
             path_parts = root.split(os.sep)
@@ -133,12 +121,13 @@ def collect_accuracy_data(root_dir):
                 summary = json.load(f)
 
                 accuracy = summary.get('accuracy', None)
-
-                exceed = summary.get('duplicate', None)
                 exceed = summary.get('exceed_in_total', None)
                 
-                n = summary['configuration']['sampling_params']['n']
-                
+                try:
+                    n = summary['configuration']['sampling_params']['n']
+                except:
+                    n = 1
+
                 if n > n_data[(model_name, dataset)]:
                     accuracy_data[model_name][dataset] = accuracy
                     exceed_data[model_name][dataset] = exceed
@@ -149,7 +138,7 @@ def collect_accuracy_data(root_dir):
     
     return accuracy_data, exceed_data, sorted(datasets), sorted(models)
 
-def generate_markdown_table(accuracy_data, datasets, models):
+def generate_markdown_table(accuracy_data, exceed_data, datasets, models):
     # 准备表格数据
     table = []
     
@@ -163,21 +152,40 @@ def generate_markdown_table(accuracy_data, datasets, models):
     # 每行数据
     for model in models:
         row = [model]
-        total = 0
+        total_acc = 0
+        total_exceed = 0
         count = 0
         
         for dataset in datasets:
-            accuracy = accuracy_data[model].get(dataset, "-")
-            if isinstance(accuracy, (int, float)):
-                row.append(f"{accuracy * 100:.1f}")
-                total += accuracy
+            accuracy = accuracy_data[model].get(dataset, None)
+            exceed = exceed_data[model].get(dataset, None)
+            if accuracy is not None and exceed is not None:
+                row.append(f"{accuracy * 100:.1f} ({exceed * 100:.1f})")
+                total_acc += accuracy
+                total_exceed += exceed
+                count += 1
+            elif accuracy is not None:
+                row.append(f"{accuracy * 100:.1f} (-)")
+                total_acc += accuracy
+                count += 1
+            elif exceed is not None:
+                row.append(f"- ({exceed * 100:.1f})")
+                total_exceed += exceed
                 count += 1
             else:
-                row.append(accuracy)
+                row.append("-")
         
-        # 计算平均准确率
-        avg = total / count if count > 0 else "-"
-        row.append(f"{avg * 100:.1f}" if isinstance(avg, (int, float)) else avg)
+        # 计算平均值
+        avg_acc = total_acc / count if count > 0 else "-"
+        avg_exceed = total_exceed / count if count > 0 else "-"
+        if avg_acc != "-" and avg_exceed != "-":
+            row.append(f"{avg_acc * 100:.1f} ({avg_exceed * 100:.1f})")
+        elif avg_acc != "-":
+            row.append(f"{avg_acc * 100:.1f} (-)")
+        elif avg_exceed != "-":
+            row.append(f"- ({avg_exceed * 100:.1f})")
+        else:
+            row.append("-")
         table.append(row)
     
     # 生成Markdown格式
@@ -188,7 +196,10 @@ def generate_markdown_table(accuracy_data, datasets, models):
     return markdown
 
 def main():
-    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-20k-32768-n64"  # 当前目录，可以根据需要修改
+    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-20k-32768"
+    # root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-40k-32768"
+    # root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-80k-32768"
+
     # root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.7"  # 当前目录，可以根据需要修改
     # root_dir = '/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results-temp0.6-tp95-n128'
 
@@ -198,17 +209,13 @@ def main():
             result = process_folder(folder_path)
     
     accuracy_data, exceed_data, datasets, models = collect_accuracy_data(root_dir)
-    markdown_table1 = generate_markdown_table(accuracy_data, datasets, models)
-    
-    markdown_table2 = generate_markdown_table(exceed_data, datasets, models)
+    markdown_table = generate_markdown_table(accuracy_data, exceed_data, datasets, models)
+
 
     # 保存到文件
-    with open("model_performance.md", "w") as f:
-        f.write("# Acc\n\n")
-        f.write(markdown_table1 + '\n\n\n\n')
-
-        f.write("# Exceed\n\n")
-        f.write(markdown_table2)
+    with open(f"model_performance_{root_dir.split('/')[-1]}.md", "w") as f:
+        f.write("# Model Performance\n\n")
+        f.write(markdown_table)
 
     print("Markdown table generated successfully in model_performance.md")
 

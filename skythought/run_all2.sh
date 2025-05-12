@@ -1,0 +1,297 @@
+# git pull
+
+# pip install deepspeed==0.15.3
+
+# python scripts/process_openthoughts_metadata.py
+
+# cd skythought
+
+export WANDB_API_KEY=efe05a42b8b37cb8028408410c02bcefbddf42c0
+export TRANSFORMERS_OFFLINE=0
+export HF_DATASETS_OFFLINE=0
+export DISABLE_VERSION_CHECK=1
+export WANDB_PROJECT=long-cot
+export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+num_replicas=8
+
+# chekpoint保存路径
+export CHECKPOINT_SAVE='./save'
+
+len=32768
+
+# Evaluation tasks
+tasks=(
+    "math500|4"
+    "olympiadbench_math_en|4"
+    "aime24|32"
+    # "aime25|32"
+    "amc23|32"
+)
+
+# shift model
+shift_versions=(
+    v3cat_scale_glu_relu
+)
+
+train_configs=(
+    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-128-shift_gate.yaml|128"
+    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-256-shift_gate.yaml|256"
+
+    "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-256-shift_gate.yaml|256"
+    "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-128-shift_gate.yaml|128"
+)
+
+export GATE_RANK_COE="1"
+
+# 遍历每个配置
+for config_item in "${train_configs[@]}"; do
+    # 分割 config_path 和 rank
+    IFS='|' read -r config_path rank <<< "$config_item"
+
+    echo "Training with config: $config_path (rank=$rank)"
+
+    config_name=$(basename "$config_path")
+    config_name="${config_name%.yaml}"
+
+    size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+
+    for version in "${shift_versions[@]}"; do
+        export SHIFT_VERSION="${version}-${rank}"
+
+        echo "Current SHIFT_VERSION: $SHIFT_VERSION"
+
+        # 构建输出路径
+        output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
+        if [[ "$config_name" == *"lora"* ]]; then
+            output_path="$output_path/complete_ckpt"
+        fi
+
+        if [ ! -f "$output_path/config.json" ]; then
+            echo "File $output_path/config.json doesn't exist. Starting training..."
+
+            FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+        else
+            echo "File $output_path/config.json exists. Skipping training."
+        fi
+
+        # 执行评估
+        for task_str in "${tasks[@]}"; do
+            IFS='|' read -r task_name n <<< "$task_str"
+
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+            skythought evaluate \
+                --model "$output_path" \
+                --system-prompt-name skythought \
+                --task "$task_name" \
+                --backend ray \
+                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
+                --n=$n \
+                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
+        done
+    done
+done
+
+
+# base model
+train_configs=(
+    # # short
+    # "configs/train_full/qwen2-7b_full_sft_math_short_cot_20k.yaml"
+    # "configs/train_lora/qwen2-7b_lora_sft_math_short_cot_20k-64.yaml"
+
+    # # long
+    # "configs/train_full/qwen2-3b_full_sft_math_long_cot_20k.yaml"
+
+    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-128.yaml"
+    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-256.yaml"
+
+    "configs/train_full/llama3.1-8b_full_sft_math_long_cot_20k.yaml"
+    # "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-128.yaml"
+    # "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-256.yaml"
+
+)
+
+for config_path in "${train_configs[@]}"; do
+    # 检查config_path是否包含"gate"
+    if [[ "$config_path" == *"gate1.6"* ]]; then
+        export GATE_RANK_COE="1.636" # qwen 7b
+    else
+        export GATE_RANK_COE="1"
+    fi
+
+    echo "Training with config: $config_path"
+
+    config_name=$(basename "$config_path")
+    config_name="${config_name%.yaml}"
+    output_path="$CHECKPOINT_SAVE/$config_name"
+    
+    # 提取数字部分（40k或80k）
+    size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+    
+    if [[ "$config_name" == *"lora"* ]]; then
+        output_path="$output_path/complete_ckpt"
+    fi
+
+    echo "Output will be saved to: $output_path"
+
+    if [ ! -f "$output_path/config.json" ]; then
+        echo "File $output_path/config.json doesn't exist. Starting training..."
+
+        FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+    else
+        echo "File $output_path/config.json exists. Skipping training."
+    fi
+
+    # Run evaluation
+    for task_str in "${tasks[@]}"; do
+        IFS='|' read -r task_name n <<< "$task_str"
+
+        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+        skythought evaluate \
+            --model "$output_path" \
+            --system-prompt-name skythought \
+            --task "$task_name" \
+            --backend ray \
+            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+            --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
+            --n=$n \
+            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
+    done
+done
+
+
+
+# ####### 16k
+
+# len=16384
+
+# # Evaluation tasks
+# tasks=(
+#     # "math500|4"
+#     # "olympiadbench_math_en|4"
+#     # "aime24|16" 
+#     # "aime25|16"
+#     # "amc23|16"
+
+#     "aime24|256"
+#     "aime25|256"
+#     "olympiadbench_math_en|256"
+# )
+
+# # shift model
+# shift_versions=(
+#     v3cat_scale_glu_relu
+# )
+
+# train_configs=(
+#     "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-256-shift_gate.yaml|256"
+# )
+
+# export GATE_RANK_COE="1"
+
+# # 遍历每个配置
+# for config_item in "${train_configs[@]}"; do
+#     # 分割 config_path 和 rank
+#     IFS='|' read -r config_path rank <<< "$config_item"
+
+#     echo "Training with config: $config_path (rank=$rank)"
+
+#     config_name=$(basename "$config_path")
+#     config_name="${config_name%.yaml}"
+
+#     size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+
+#     for version in "${shift_versions[@]}"; do
+#         export SHIFT_VERSION="${version}-${rank}"
+
+#         echo "Current SHIFT_VERSION: $SHIFT_VERSION"
+
+#         # 构建输出路径
+#         output_path="$CHECKPOINT_SAVE/$config_name/$SHIFT_VERSION"
+#         if [[ "$config_name" == *"lora"* ]]; then
+#             output_path="$output_path/complete_ckpt"
+#         fi
+
+#         if [ ! -f "$output_path/config.json" ]; then
+#             echo "File $output_path/config.json doesn't exist. Starting training..."
+
+#             FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+#         else
+#             echo "File $output_path/config.json exists. Skipping training."
+#         fi
+
+#         # 执行评估
+#         for task_str in "${tasks[@]}"; do
+#             IFS='|' read -r task_name n <<< "$task_str"
+
+#             echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+#             skythought evaluate \
+#                 --model "$output_path" \
+#                 --system-prompt-name skythought \
+#                 --task "$task_name" \
+#                 --backend ray \
+#                 --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+#                 --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
+#                 --n=$n \
+#                 --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
+#         done
+#     done
+# done
+
+# # base model
+# train_configs=(
+#     "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_20k-296.yaml"
+# )
+
+# for config_path in "${train_configs[@]}"; do
+#     # 检查config_path是否包含"gate"
+#     if [[ "$config_path" == *"gate1.6"* ]]; then
+#         export GATE_RANK_COE="1.636" # qwen 7b
+#     else
+#         export GATE_RANK_COE="1"
+#     fi
+
+#     echo "Training with config: $config_path"
+
+#     config_name=$(basename "$config_path")
+#     config_name="${config_name%.yaml}"
+#     output_path="$CHECKPOINT_SAVE/$config_name"
+    
+#     # 提取数字部分（40k或80k）
+#     size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+    
+#     if [[ "$config_name" == *"lora"* ]]; then
+#         output_path="$output_path/complete_ckpt"
+#     fi
+
+#     echo "Output will be saved to: $output_path"
+
+#     if [ ! -f "$output_path/config.json" ]; then
+#         echo "File $output_path/config.json doesn't exist. Starting training..."
+
+#         FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+#     else
+#         echo "File $output_path/config.json exists. Skipping training."
+#     fi
+
+#     # Run evaluation
+#     for task_str in "${tasks[@]}"; do
+#         IFS='|' read -r task_name n <<< "$task_str"
+
+#         echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+#         skythought evaluate \
+#             --model "$output_path" \
+#             --system-prompt-name skythought \
+#             --task "$task_name" \
+#             --backend ray \
+#             --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+#             --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
+#             --n=$n \
+#             --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
+#     done
+# done

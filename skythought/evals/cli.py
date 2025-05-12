@@ -17,12 +17,14 @@ from skythought.evals.inference_and_check import (
     generate_and_save,
     generate_and_score,
     score_results,
+    score_responses
 )
 from skythought.evals.models import ModelConfig, get_system_prompt_keys
 from skythought.evals.tasks import TASK_HANDLER_MAP, TASK_NAMES_TO_YAML, TaskConfig
 from skythought.evals.util.cli_util import get_deterministic_hash, parse_multi_args
 from skythought.evals.util.common import set_seed
-from skythought.evals.util.results import SummaryResults
+from skythought.evals.util.results import SummaryResults, save_summary
+from skythought.evals.util.metrics import pass_at_k
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -515,6 +517,66 @@ def generate(
         batch_size=batch_size,
     )
 
+import json
+import pandas as pd
+
+import json
+import pandas as pd
+
+def generate_id_to_results(results_file: str) -> dict:
+    """
+    从 results.json 文件生成 id_to_results 字典。
+
+    参数:
+        results_file (str): results.json 文件的路径。
+
+    返回:
+        dict: 一个字典，其中键是唯一 ID，值是包含来自 results.json 文件的数据的字典。
+              如果文件不存在或其他错误，则返回一个空字典。
+    """
+    id_to_results = {}
+    try:
+        with open(results_file, "r") as f:
+            data = json.load(f)  # 加载整个 JSON 文件
+            if not isinstance(data, dict): # 修改了这里，以适应给定的JSON 结构
+                print(f"Error: Expected a dict of results, but got {type(data)}.  Returning empty dict.")
+                return {}
+
+            for key, item in data.items(): # 遍历字典的键值对
+                # 检查 item 是否为字典
+                if not isinstance(item, dict):
+                    print(f"Error: Expected each item in the dict to be a dictionary, but got {type(item)}. Skipping this item.")
+                    continue
+                # 检查唯一 ID 是否存在。现在直接使用字典的键
+                unique_id = str(key)  # 确保 ID 是字符串类型
+
+                # 存储整个 item。我们将像原始代码一样向其添加更多内容。
+                id_to_results[unique_id] = item
+
+                # 原始代码添加了这些键。如果它们不存在，则将它们添加为 None 或 []
+                if "responses" not in item:
+                    id_to_results[unique_id]["responses"] = []
+                if "token_usages" not in item:
+                    id_to_results[unique_id]["token_usages"] = []
+                if "prompt" not in item:
+                    id_to_results[unique_id]["prompt"] = None
+                if "input_conversation" not in item:
+                    id_to_results[unique_id]["input_conversation"] = None
+                if "activation_file" not in item:
+                    id_to_results[unique_id]["activation_file"] = None
+
+    except FileNotFoundError:
+        print(f"Error: File not found at {results_file}. Returning empty dict.")
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"Error: JSONDecodeError: {e}.  Invalid JSON in {results_file}. Returning empty dict.")
+        return {}
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}. Returning empty dict.")
+        return {}
+    return id_to_results
+
+
 
 @app.command("score", help="Score a model on a task")
 def score(
@@ -546,18 +608,70 @@ def score(
     handler_cls = TASK_HANDLER_MAP[handler_name]
     handler = handler_cls(task_config)
 
-    # get run_config from run_dir
+    id_to_results = generate_id_to_results(run_dir / "results.json")
+    accuracy, id_to_scores, total_finish = score_responses(
+        handler, id_to_results, max_workers=8
+    )
+    logger.info(f"Accuracy: {accuracy}")
+
+    sample_n = len(next(iter(id_to_results.values()))['responses'])
+    num_responses_total = len(id_to_results) * sample_n
+
+    pass_at_k_metrics = None
+    if sample_n > 1:
+        pass_at_k_metrics = pass_at_k(sample_n, id_to_scores)
+
+    total_completion_tokens = None
+    total_prompt_tokens = None
+    summary_data = SummaryResults(
+        configuration=None,
+        total_completion_tokens=total_completion_tokens,
+        total_prompt_tokens=total_prompt_tokens,
+        avg_completion_tokens=(
+            round(total_completion_tokens / num_responses_total, 3)
+            if total_completion_tokens
+            else 0
+        ),
+        avg_prompt_tokens=(
+            round(total_prompt_tokens / num_responses_total, 3)
+            if total_prompt_tokens
+            else 0
+        ),
+        accuracy=accuracy,
+        pass_at_k=pass_at_k_metrics,
+    )
+
     summary_file = run_dir / "summary.json"
-    if not summary_file.exists():
-        raise ValueError(f"Run summary file {summary_file} does not exist.")
+    save_summary(summary_file, summary_data)
 
-    with open(summary_file, "r") as f:
-        run_summary = json.load(f)
+    # get run_config from run_dir
+    # summary_file = run_dir / "summary.json"
+    # if not summary_file.exists():
+    #     raise ValueError(f"Run summary file {summary_file} does not exist.")
 
-    run_summary = SummaryResults(**run_summary)
+    # with open(summary_file, "r") as f:
+    #     run_summary = json.load(f)
 
-    score_results(handler, run_dir, run_summary)
+    # run_summary = SummaryResults(**run_summary)
+
+    # score_results(handler, run_dir, run_summary)
 
 
 def main():
     app()
+
+if __name__ == "__main__":
+    root_dirs = [
+        'skythought/evaluate_results/temp0.6-tp95/math-long-cot-40k-32768',
+        'skythought/evaluate_results/temp0.6-tp95/math-long-cot-80k-32768',
+        'skythought/evaluate_results/temp0.6-tp95/math-long-cot-80k-16384',
+    ]
+    for root_dir in root_dirs:
+        for root, dirs, files in os.walk(root_dir):
+            if 'results.json' in files and 'summary.json' not in files:
+                path_parts = root.split(os.sep)
+                dataset = path_parts[-2]  # 父目录是数据集名称
+                model_dir = path_parts[-1]  # 当前目录是模型目录
+                print(dataset, model_dir)
+                print(root, '\n\n')
+                score(root, dataset)

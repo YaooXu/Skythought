@@ -57,11 +57,16 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
             token_usages = entry.get("token_usages", [])
             activation_files = entry.get("activation_file", [])
 
+
             correct_lengths = []
             for i in range(len(responses)):
-                if i >= len(token_usages):
-                    continue
-                if not (token_usages[i].get("completion_tokens", 0) == 16384):  # correctness = True
+                length = token_usages[i]['completion_tokens'] + token_usages[i]['prompt_tokens']
+                if length in [16384, 16385, 32769]:
+                    exceed = 1
+                else:
+                    exceed = 0
+
+                if not exceed:
                     text = responses[i].get("content", "")
                     encoded = tokenizer.encode(text, add_special_tokens=False)
                     correct_lengths.append(len(encoded))
@@ -73,21 +78,21 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
             prefix = int(np.mean(correct_lengths)) if len(correct_lengths) > 0 else 16384
 
             for i in range(len(responses)):
-                if i >= len(token_usages) or i >= len(activation_files):
-                    continue
-                
-                # correctness = responses[i].get("correctness", False)
-                # key = "correct" if correctness else "wrong"
-                
-                exceed = token_usages[i].get("completion_tokens", 0) == 16384
+            
+                length = token_usages[i]['completion_tokens'] + token_usages[i]['prompt_tokens']
+                if length in [16384, 16385, 32769]:
+                    exceed = 1
+                else:
+                    exceed = 0
+
                 key = "exceed" if exceed else "nomal"
                 
                 if exceed:
                     # print(prefix)
                     output_text = deduplicate(responses[i]['content'])
                     prefix = min(prefix, len(tokenizer.encode(output_text, add_special_tokens=False)))
-                    # print(prefix)
-                    # print('\n\n')
+                    print(prefix, len(tokenizer.encode(output_text, add_special_tokens=False)))
+                    print('\n\n')
                 try:
                     result = extract_activation(activation_files[i])
                 except Exception as e:
@@ -135,11 +140,12 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
 
     all_means = np.concatenate([exceed_means, normal_means])
     print(f'All (mean over layers): {all_means.mean():.4f}')
+    print(len(exceed_means) / len(all_means), len(normal_means) / len(all_means))
 
     # 打印统计信息
     print(f'Normal (mean over layers): {normal_means.mean():.4f}')
     print(f'Exceed (mean over layers): {exceed_means.mean():.4f}')
-    print(f'Mean diff (Normal - Exceed): {normal_means.mean() - exceed_means.mean():.4f}')
+    # print(f'Mean diff (Normal - Exceed): {normal_means.mean() - exceed_means.mean():.4f}')
 
     if len(exceed_means) == 0 or len(normal_means) == 0:
         print("⚠️ 缺少 exceed 或 normal 样本，跳过绘图")
@@ -156,7 +162,7 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
 
 
     # ---------- 绘制箱线图 ----------
-    plt.figure(figsize=(3, 4.5))  # 保持较窄的宽度
+    plt.figure(figsize=(3, 3.5))  # 保持较窄的宽度
 
     # 三组数据：exceed, normal (full), normal (random subset)
     box_data = [exceed_means, normal_means, all_means]
@@ -200,19 +206,17 @@ def plot_single_model_metric_diff(pred_file, metric="activations_norm", layer_ra
     #             fontsize=8,
     #             bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'))
 
-    plt.title(f'Mean {metric} over Layers:\nExceed vs Normal',  # 缩短标题
-            fontsize=10, pad=10)
-    plt.ylabel(f'Mean {metric} (over layers)', fontsize=9)
+    plt.ylabel(f'Mean relative change (over layers)', fontsize=9)
     plt.xticks(positions, labels, fontsize=8)  # 确保标签对应新位置
     plt.yticks(fontsize=8)
-    plt.ylim(0.72, 0.84)
+    # plt.ylim(0.73, 0.83)
     plt.grid(axis='y', linestyle=':', alpha=0.5)
 
     # 调整x轴范围使图形更紧凑
     plt.xlim(positions[0]-0.5, positions[-1]+0.5)
 
     plt.tight_layout()
-    plt.savefig('boxplot_comparison.pdf', bbox_inches='tight', dpi=300)
+    plt.savefig('boxplot_comparison.pdf', bbox_inches='tight', dpi=500)
     plt.show()
 
 # 示例调用
@@ -224,10 +228,10 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", trust_remo
 # metric = 'activations_norm'
 metric = 'delta_norms' 
 pred_files = [
-    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt-math500.json',
-    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-128_complete_ckpt-math500.json',
-    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_full_sft_math_long_cot_20k-math500.json',
-    '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-64-shift_gate_v2cat_scale_glu_relu-64_complete_ckpt-math500.json',
+    'h-merged_predictions-save_qwen2-7b_full_sft_math_long_cot_20k-math500.json',
+
+    # '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_full_sft_math_long_cot_20k-math500.json',
+    # '/mnt/workspace/user/sunwangtao/Skythought/merged_predictions-qwen2-7b_lora_sft_math_long_cot_20k-64-shift_gate_v2cat_scale_glu_relu-64_complete_ckpt-math500.json',
     # '/mnt/workspace/user/sunwangtao/Skythought/h-merged_predictions-save_qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt-math500.json'
 ]
 

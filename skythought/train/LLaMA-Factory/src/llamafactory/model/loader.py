@@ -167,8 +167,14 @@ def load_model(
                 
                 if model_args.shift_gate:
                     
-                    from ..custom_models.modeling_qwen2_shift_gate import Qwen2ForCausalLM
-                    model = Qwen2ForCausalLM.from_pretrained(**init_kwargs)
+                    if 'qwen' in model_args.model_name_or_path.lower():
+                        from ..custom_models.modeling_qwen2_shift_gate import Qwen2ForCausalLM
+                        model = Qwen2ForCausalLM.from_pretrained(**init_kwargs)
+                    elif 'llama' in model_args.model_name_or_path.lower():
+                        from ..custom_models.modeling_llama_shift_gate import LlamaForCausalLM
+                        model = LlamaForCausalLM.from_pretrained(**init_kwargs)
+                    else:
+                        raise NotImplementedError
 
                     if not load_bare_model:
                         with torch.no_grad():

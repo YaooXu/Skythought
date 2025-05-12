@@ -179,3 +179,5 @@ skythought/save/*
 
 tmp
 model_performance.md
+
+skythought/evaluate_results/
