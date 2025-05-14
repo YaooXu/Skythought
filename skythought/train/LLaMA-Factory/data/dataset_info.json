@@ -685,64 +685,8 @@
       "assistant_tag": "assistant"
     }
   },
-  "Open-Thoughts-40k": {
-    "file_name": "Open-Thoughts/samples-40k.json",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "conversations",
-      "system": "system"
-    },
-    "tags": {
-      "role_tag": "from",
-      "content_tag": "value",
-      "user_tag": "user",
-      "assistant_tag": "assistant"
-    }
-  },
-  "Open-Thoughts-4k-10k": {
-    "file_name": "Open-Thoughts/samples_0-4000.json",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "conversations",
-      "system": "system"
-    },
-    "tags": {
-      "role_tag": "from",
-      "content_tag": "value",
-      "user_tag": "user",
-      "assistant_tag": "assistant"
-    }
-  },
-  "Open-Thoughts-8k-10k": {
-    "file_name": "Open-Thoughts/samples_0-8000.json",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "conversations",
-      "system": "system"
-    },
-    "tags": {
-      "role_tag": "from",
-      "content_tag": "value",
-      "user_tag": "user",
-      "assistant_tag": "assistant"
-    }
-  },
-  "Open-Thoughts-12k-10k": {
-    "file_name": "Open-Thoughts/samples_0-12000.json",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "conversations",
-      "system": "system"
-    },
-    "tags": {
-      "role_tag": "from",
-      "content_tag": "value",
-      "user_tag": "user",
-      "assistant_tag": "assistant"
-    }
-  },
-  "Open-Thoughts-16k-10k": {
-    "file_name": "Open-Thoughts/samples_0-16000.json",
+  "Open-Thoughts-114k": {
+    "file_name": "Open-Thoughts/openthoughts-114k.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "conversations",
