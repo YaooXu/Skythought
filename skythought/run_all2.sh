@@ -22,11 +22,18 @@ len=32768
 
 # Evaluation tasks
 tasks=(
-    "math500|4"
-    "olympiadbench_math_en|4"
-    "aime24|32"
-    # "aime25|32"
-    "amc23|32"
+    "math500|8"
+    "olympiadbench_math_en|8"
+    "amc23|8"
+    "gpqa_diamond|8"
+    "livecodebench|8"
+    "aime24|256"
+    "aime25|256"
+)
+
+temps=(
+    0.7
+    0.6
 )
 
 # shift model
@@ -35,14 +42,9 @@ shift_versions=(
 )
 
 train_configs=(
-    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-128-shift_gate.yaml|128"
-    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-256-shift_gate.yaml|256"
-
-    "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-256-shift_gate.yaml|256"
-    "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-128-shift_gate.yaml|128"
+    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_114k-256-shift_gate.yaml|256"
 )
 
-export GATE_RANK_COE="1"
 
 # 遍历每个配置
 for config_item in "${train_configs[@]}"; do
@@ -76,41 +78,38 @@ for config_item in "${train_configs[@]}"; do
         fi
 
         # 执行评估
-        for task_str in "${tasks[@]}"; do
-            IFS='|' read -r task_name n <<< "$task_str"
+        for temp in "${temps[@]}"; do
+            for task_str in "${tasks[@]}"; do
+                IFS='|' read -r task_name n <<< "$task_str"
 
-            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+                echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
-            skythought evaluate \
-                --model "$output_path" \
-                --system-prompt-name skythought \
-                --task "$task_name" \
-                --backend ray \
-                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-                --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
-                --n=$n \
-                --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
+                skythought evaluate \
+                    --model "$output_path" \
+                    --system-prompt-name skythought \
+                    --task "$task_name" \
+                    --backend ray \
+                    --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                    --sampling-params temperature=$temp,top_p=0.95,max_tokens=$len \
+                    --n=$n \
+                    --result-dir "./evaluate_results/temp$temp-tp95/math-long-cot-$size_part-$len/$task_name"
+            done
         done
     done
 done
 
-
 # base model
 train_configs=(
-    # # short
-    # "configs/train_full/qwen2-7b_full_sft_math_short_cot_20k.yaml"
-    # "configs/train_lora/qwen2-7b_lora_sft_math_short_cot_20k-64.yaml"
+    # short
+    # "configs/train_lora/qwen2-7b_lora_sft_math_short_cot_20k-32.yaml"
 
-    # # long
-    # "configs/train_full/qwen2-3b_full_sft_math_long_cot_20k.yaml"
+    # long
+    # "configs/train_full/qwen2-7b_full_sft_math_long_cot_20k.yaml"
+    "configs/train_lora/qwen2-7b_lora_sft_math_long_cot_114k-296.yaml"
 
-    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-128.yaml"
-    # "configs/train_lora/qwen2-3b_lora_sft_math_long_cot_20k-256.yaml"
-
-    "configs/train_full/llama3.1-8b_full_sft_math_long_cot_20k.yaml"
+    # "configs/train_full/llama3.1-8b_full_sft_math_long_cot_20k.yaml"
     # "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-128.yaml"
     # "configs/train_lora/llama3.1-8b_lora_sft_math_long_cot_20k-256.yaml"
-
 )
 
 for config_path in "${train_configs[@]}"; do
@@ -144,24 +143,93 @@ for config_path in "${train_configs[@]}"; do
         echo "File $output_path/config.json exists. Skipping training."
     fi
 
-    # Run evaluation
-    for task_str in "${tasks[@]}"; do
-        IFS='|' read -r task_name n <<< "$task_str"
+    # 执行评估
+    for temp in "${temps[@]}"; do
+        for task_str in "${tasks[@]}"; do
+            IFS='|' read -r task_name n <<< "$task_str"
 
-        echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
 
-        skythought evaluate \
-            --model "$output_path" \
-            --system-prompt-name skythought \
-            --task "$task_name" \
-            --backend ray \
-            --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
-            --sampling-params temperature=0.6,top_p=0.95,max_tokens=$len \
-            --n=$n \
-            --result-dir "./evaluate_results/temp0.6-tp95/math-long-cot-$size_part-$len/$task_name"
+            skythought evaluate \
+                --model "$output_path" \
+                --system-prompt-name skythought \
+                --task "$task_name" \
+                --backend ray \
+                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                --sampling-params temperature=$temp,top_p=0.95,max_tokens=$len \
+                --n=$n \
+                --result-dir "./evaluate_results/temp$temp-tp95/math-long-cot-$size_part-$len/$task_name"
+        done
     done
+
 done
 
+
+tasks=(
+    # "math500|8"
+    # "olympiadbench_math_en|8"
+    # "amc23|8"
+    # "gpqa_diamond|8"
+    # "livecodebench|8"
+    "aime24|256"
+    "aime25|256"
+)
+# base model
+train_configs=(
+    "/mnt/workspace/user/sunwangtao/.cache/huggingface/hub/models--open-thoughts--OpenThinker-7B/snapshots/5a931fd3fa8618acda2da8eaec4a3f10ee009739/"
+)
+
+for config_path in "${train_configs[@]}"; do
+    # 检查config_path是否包含"gate"
+    if [[ "$config_path" == *"gate1.6"* ]]; then
+        export GATE_RANK_COE="1.636" # qwen 7b
+    else
+        export GATE_RANK_COE="1"
+    fi
+
+    echo "Training with config: $config_path"
+
+    config_name=$(basename "$config_path")
+    config_name="${config_name%.yaml}"
+    output_path="$CHECKPOINT_SAVE/$config_name"
+    
+    # 提取数字部分（40k或80k）
+    size_part=$(echo "$config_name" | grep -oE '[0-9]+k')
+    
+    if [[ "$config_name" == *"lora"* ]]; then
+        output_path="$output_path/complete_ckpt"
+    fi
+
+    echo "Output will be saved to: $output_path"
+
+    if [ ! -f "$output_path/config.json" ]; then
+        echo "File $output_path/config.json doesn't exist. Starting training..."
+
+        FORCE_TORCHRUN=1 llamafactory-cli train "$config_path"
+    else
+        echo "File $output_path/config.json exists. Skipping training."
+    fi
+
+    # 执行评估
+    for temp in "${temps[@]}"; do
+        for task_str in "${tasks[@]}"; do
+            IFS='|' read -r task_name n <<< "$task_str"
+
+            echo "Evaluating model: $output_path on task: $task_name (n=$n)"
+
+            skythought evaluate \
+                --model "$output_path" \
+                --system-prompt-name skythought \
+                --task "$task_name" \
+                --backend ray \
+                --backend-args "tensor_parallel_size=1,num_replicas=$num_replicas" \
+                --sampling-params temperature=$temp,top_p=0.95,max_tokens=$len \
+                --n=$n \
+                --result-dir "./evaluate_results/temp$temp-tp95/math-long-cot-$size_part-$len/$task_name"
+        done
+    done
+
+done
 
 
 # ####### 16k

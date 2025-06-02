@@ -13,17 +13,50 @@ import copy
 import os
 import re
 
-os.environ['HF_HOME'] = '/mnt/workspace/user/sunwangtao/.cache/huggingface'
+# os.environ['HF_HOME'] = '/mnt/workspace/user/sunwangtao/.cache/huggingface'
 
-ds = load_dataset("open-thoughts/OpenThoughts-114k", "default")['train']
+# ds = load_dataset("open-thoughts/OpenThoughts-114k", "default")['train']
 
-output_path = 'skythought/train/LLaMA-Factory/data/Open-Thoughts/openthoughts-114k.json'
+# ds.to_json(output_path)
 
-data_list = []
-for item in ds:
-    data_list.append(item)
 
-with open(output_path, 'w', encoding='utf-8') as f:
-    json.dump(data_list, f, ensure_ascii=False, indent=2)
+ds = load_dataset("GAIR/LIMO", 'default')['train']
 
-print(f"Dataset saved to JSON file: {output_path}")
+output_path = 'skythought/train/LLaMA-Factory/data/Open-Thoughts/LIMO.json'
+
+
+system_prompt = "Your role as an assistant involves thoroughly exploring questions through a systematic long thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution. In the Thought section, detail your reasoning process using the specified format: <|begin_of_thought|> {thought with steps separated with '\\n\\n'} <|end_of_thought|> Each step should include detailed considerations such as analisying questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The solution should remain a logical, accurate, concise expression style and detail necessary step needed to reach the conclusion, formatted as follows: <|begin_of_solution|> {final formatted, precise, and clear solution} <|end_of_solution|> Now, try to solve the following question through the above guidelines:"
+
+math_instruction = "Return your final response within \\boxed{}. "
+
+long_cot_samples = []
+for sample in ds:
+    problem = sample['question']
+
+    prompt = math_instruction + problem
+        
+    # 处理long_cot样本
+    conversations = [
+        {
+            "from": "user",
+            "value": prompt
+        },
+        {
+            "from": "assistant",
+            "value": sample['solution']
+        }
+    ]
+
+    long_cot_sample = {
+        "system": system_prompt,
+        "conversations": conversations
+    }
+
+    long_cot_samples.append(long_cot_sample)
+
+output_dir = "skythought/train/LLaMA-Factory/data/Open-Thoughts/"
+
+with open(output_dir + "LIMO.json", "w") as f:
+    json.dump(long_cot_samples, f, indent=4)
+
+print(f"Dataset saved to {output_dir}LIMO.json")

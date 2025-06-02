@@ -53,8 +53,10 @@ def process_folder(folder_path):
         
         for response, token_usage in zip(responses, token_usages):
             total += 1
+
             length = token_usage['completion_tokens'] + token_usage['prompt_tokens']
             # length = token_usage['completion_tokens']
+
             correctness = response.get('correctness', False)
 
             if length > 16384:
@@ -104,7 +106,7 @@ def collect_accuracy_data(root_dir):
     
     # 遍历目录结构
     for root, dirs, files in os.walk(root_dir):
-        if 'aime25' in root:
+        if  'aime25' in root:
             continue
 
         if 'summary.json' in files:
@@ -128,6 +130,7 @@ def collect_accuracy_data(root_dir):
                 except:
                     n = 1
 
+                # if n in (4,16) and n > n_data[(model_name, dataset)]:
                 if n > n_data[(model_name, dataset)]:
                     accuracy_data[model_name][dataset] = accuracy
                     exceed_data[model_name][dataset] = exceed
@@ -196,7 +199,8 @@ def generate_markdown_table(accuracy_data, exceed_data, datasets, models):
     return markdown
 
 def main():
-    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-20k-32768"
+    root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot--32768"
+
     # root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-40k-32768"
     # root_dir = "/mnt/workspace/user/sunwangtao/Skythought/skythought/evaluate_results/temp0.6-tp95/math-long-cot-80k-32768"
 
@@ -213,7 +217,7 @@ def main():
 
 
     # 保存到文件
-    with open(f"model_performance_{root_dir.split('/')[-1]}.md", "w") as f:
+    with open(f"model_performance_{root_dir.split('/')[-2]+root_dir.split('/')[-1]}.md", "w") as f:
         f.write("# Model Performance\n\n")
         f.write(markdown_table)
 

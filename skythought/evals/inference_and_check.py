@@ -191,15 +191,15 @@ def factory(idx, model_id):
 
             self.last_x = cur_x
         
-        alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
-        x = x + self.W(self.R(x_shift)[0] * alpha)[0]
-        final_gate = self.gate_proj(x)[0]
+        alpha = F.relu(self.scale(torch.concat([x_shift, x], dim=-1))[0])
+        conv_x = x + self.W(self.R(x_shift)[0] * alpha)[0]
+        final_gate = self.gate_proj(conv_x)[0]
         
         if length == 1:
             # layer_activation[idx].append(self.act_fn(final_gate).cpu().float().detach())
-            layer_activation[idx].append(x.cpu().float().detach())
+            layer_activation[idx].append((x.cpu().float().detach(), conv_x.cpu().float().detach()))
             
-        up, _ = self.up_proj(x)
+        up, _ = self.up_proj(conv_x)
         x = self.act_fn(final_gate) * up
         x, _ = self.down_proj(x)
         return x
@@ -208,6 +208,44 @@ def factory(idx, model_id):
         return shift_llama_forward
     else:
         return llama_forward
+
+def process_single_activation(activations):
+    """Processes the case where layer_activation stores single activation tensors."""
+    activations_norm = torch.norm(activations, p=2, dim=1)
+    deltas = activations[1:] - activations[:-1]
+    delta_norms = torch.norm(deltas, p=2, dim=1)
+    prev_norms = torch.norm(activations[:-1], p=2, dim=1)
+    relative_deltas = delta_norms / prev_norms
+    return {
+        "activations_norm": activations_norm.cpu().float().detach().numpy(),
+        "delta_norms": delta_norms.cpu().float().detach().numpy(),
+        "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
+    }
+
+def process_dual_activation(activations_x, activations_conv_x):
+    """Processes the case where layer_activation stores tuples of (x, conv_x) tensors."""
+    # --- Calculations for x ---
+    activations_norm_x = torch.norm(activations_x, p=2, dim=1)
+    deltas_x = activations_x[1:] - activations_x[:-1]
+    delta_norms_x = torch.norm(deltas_x, p=2, dim=1)
+    prev_norms_x = torch.norm(activations_x[:-1], p=2, dim=1)
+    relative_deltas_x = delta_norms_x / prev_norms_x
+
+    # --- Calculations for conv_x ---
+    activations_norm_conv_x = torch.norm(activations_conv_x, p=2, dim=1)
+    deltas_conv_x = activations_conv_x[1:] - activations_conv_x[:-1]
+    delta_norms_conv_x = torch.norm(deltas_conv_x, p=2, dim=1)
+    prev_norms_conv_x = torch.norm(activations_conv_x[:-1], p=2, dim=1)
+    relative_deltas_conv_x = delta_norms_conv_x / prev_norms_conv_x
+
+    return {
+        "activations_norm": activations_norm_conv_x.cpu().float().detach().numpy(),
+        "delta_norms": delta_norms_conv_x.cpu().float().detach().numpy(),
+        "relative_deltas": relative_deltas_conv_x.cpu().float().detach().numpy(),
+        "activations_norm_ori": activations_norm_x.cpu().float().detach().numpy(),
+        "delta_norms_ori": delta_norms_x.cpu().float().detach().numpy(),
+        "relative_deltas_ori": relative_deltas_x.cpu().float().detach().numpy(),
+    }
 
 def create_temp_pkl_name(model_id):
     # 获取当前时间并格式化为字符串（例如：20240331_153022）
@@ -262,7 +300,10 @@ def inference(
         batch_size = kwargs.get("batch_size", 1)
         assert batch_size == 1
         
-        conversations = conversations[:50]
+        index_range_str = os.environ.get('INDEX_RANGE', '0_50')
+        st, ed = index_range_str.split('_')
+        st, ed = int(st), int(ed)
+        conversations = conversations[st:ed]
         
         engine_kwargs = copy.deepcopy(backend_params.to_dict())
         engine_kwargs["model"] = model_config.model_id
@@ -292,31 +333,18 @@ def inference(
 
             layer_activation_changes = dict()
             for layer in layer_activation:
-                activations = torch.stack(layer_activation[layer]).squeeze(1)
-                activations_norm = torch.norm(activations, p=2, dim=1)  # shape=(1024,)
-                
-                deltas = activations[1:] - activations[:-1]
-                
-                delta_norms = torch.norm(deltas, p=2, dim=1)  # shape=(1023,)
-                
-                # z_delta = torch.norm(activations[0] - activations[-1], p=2)
-                
-                prev_norms = torch.norm(activations[:-1], p=2, dim=1)  # shape=(1023,)
-                relative_deltas = delta_norms / prev_norms  # shape=(1023,)
-                
-                # cos_sims = F.cosine_similarity(activations[1:], activations[:-1], dim=1)
-                
-                # z_cos_sim = F.cosine_similarity(activations[0].unsqueeze(0), activations[-1].unsqueeze(0), dim=-1)
-                
-                layer_activation_changes[layer] = {
-                    "activations_norm": activations_norm.cpu().float().detach().numpy(),
-                    "delta_norms": delta_norms.cpu().float().detach().numpy(),
-                    "relative_deltas": relative_deltas.cpu().float().detach().numpy(),
-                    # "cos_sims": cos_sims.cpu().float().detach().numpy(),
-                    # "z_delta": z_delta.cpu().float().detach().numpy(),
-                    # "z_cos_sim": z_cos_sim.cpu().float().detach().numpy(),
-                }
-            
+                first_element = layer_activation[layer][0] if layer_activation[layer] else None
+
+                if first_element is not None and isinstance(first_element, tuple) and len(first_element) == 2:
+                    # Case 1: Elements are tuples of (x, conv_x)
+                    activations_x = torch.stack([item[0] for item in layer_activation[layer]]).squeeze(1)
+                    activations_conv_x = torch.stack([item[1] for item in layer_activation[layer]]).squeeze(1)
+                    layer_activation_changes[layer] = process_dual_activation(activations_x, activations_conv_x)
+                elif first_element is not None and not isinstance(first_element, tuple):
+                    # Case 2: Elements are single activation tensors (assuming the original structure)
+                    activations = torch.stack(layer_activation[layer]).squeeze(1)
+                    layer_activation_changes[layer] = process_single_activation(activations)
+
             print(zip_file_path, i)
             with zipfile.ZipFile(zip_file_path, 'a', zipfile.ZIP_DEFLATED) as zipf:
                 serialized_dict = pickle.dumps(layer_activation_changes)

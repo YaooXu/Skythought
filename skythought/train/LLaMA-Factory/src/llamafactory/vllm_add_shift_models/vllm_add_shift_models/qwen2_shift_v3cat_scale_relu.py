@@ -151,7 +151,7 @@ class Qwen2MLP(nn.Module):
             x_shift = self.last_x
             self.last_x = cur_x
 
-        alpha = F.sigmoid(self.scale(torch.concat([x_shift, x], dim=-1))[0])
+        alpha = F.relu(self.scale(torch.concat([x_shift, x], dim=-1))[0])
         x = x + self.W(self.R(x_shift)[0] * alpha)[0]
         final_gate = self.gate_proj(x)[0]
                     

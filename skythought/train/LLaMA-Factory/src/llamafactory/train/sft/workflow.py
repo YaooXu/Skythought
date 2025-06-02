@@ -173,6 +173,7 @@ def run_sft(
     generating_args: "GeneratingArguments",
     callbacks: Optional[List["TrainerCallback"]] = None,
 ):
+    print(training_args.dataloader_drop_last)
     if model_args.shift_gate:
         assert 'SHIFT_VERSION' in os.environ
         training_args.output_dir = training_args.output_dir + '/' + os.environ['SHIFT_VERSION']

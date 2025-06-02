@@ -245,85 +245,33 @@ class Qwen2MLP_shift(nn.Module):
         #     rank = int(os.environ['SHIFT_RANK'])
         # else:
         #     rank = 64
+        st_layer_idx = int(os.environ['ST_LAYER_IDX'])
+
         rank = int(os.environ['SHIFT_VERSION'].split('-')[-1])
-            
         self.shift_version = os.environ.get('SHIFT_VERSION', '').split('-')[0]
 
-        if self.shift_version in ('v4cat', ): # 6
-            self.R = nn.Linear(2 * self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.intermediate_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, 1, bias=False)
+        self.shift = layer_idx >= st_layer_idx
 
-        elif self.shift_version in ('v4cat_scale', ): # 5
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.intermediate_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, 1, bias=False)
+        if self.shift:
+            if self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu', 'v3cat_scale_glu_relu', 'v4cat_scale_glu_relu'): # 4
+                self.R = nn.Linear(self.hidden_size, rank, bias=False)
+                self.W = nn.Linear(rank, self.hidden_size, bias=False)
+                self.scale = nn.Linear(2 * self.hidden_size, rank, bias=False)
 
-        elif self.shift_version in ('v4cat_scale_glu_bias', ): # 7
-            self.R = nn.Linear(self.hidden_size, rank, bias=True)
-            self.W = nn.Linear(rank, self.intermediate_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, rank, bias=False)
+            elif self.shift_version in ('v3_wo_h_i_1_relu', 'v3_wo_h_i_in_gate_relu'): # 4
+                self.R = nn.Linear(self.hidden_size, rank, bias=False)
+                self.W = nn.Linear(rank, self.hidden_size, bias=False)
+                self.scale = nn.Linear(self.hidden_size, rank, bias=False)
 
-        elif self.shift_version in ('v4sub', ): # 5
-            self.R = nn.Linear(self.hidden_size, rank, bias=True)
-            self.W = nn.Linear(rank, self.intermediate_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, 1, bias=False)
+            elif self.shift_version in ('v3_wo_gate'): # 4
+                self.R = nn.Linear(self.hidden_size, rank, bias=False)
+                self.W = nn.Linear(rank, self.hidden_size, bias=False)
+                # self.scale = nn.Linear(self.hidden_size, rank, bias=False)
 
-        elif self.shift_version in ('v4pre', ): # 5
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.intermediate_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, 1, bias=False)
-
-        elif self.shift_version in ('v4pre_glu', ): # 6
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.intermediate_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, rank, bias=False)
-
-        elif self.shift_version in ('v2cat', ): # 3
-            self.R = nn.Linear(2 * self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, 1, bias=False)
-
-        elif self.shift_version in ('v2cat_scale'): # 2
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, 1, bias=False)
-
-        elif self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu', 'v3cat_scale_glu_relu', 'v4cat_scale_glu_relu'): # 4
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, rank, bias=False)
-
-        elif self.shift_version in ('v2cat_glu', 'v2cat_glu_silu'):
-            self.R = nn.Linear(2 * self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(2 * self.hidden_size, rank, bias=False)
-
-        elif self.shift_version in ('v2sub', ):
-            self.R = nn.Linear(self.hidden_size, rank, bias=True)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, 1, bias=False)
-
-        elif self.shift_version in ('v2pre', ): # 2 60
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, 1, bias=False)
-
-        elif self.shift_version in ('v2pre_glu', 'v2pre_glu_relu'): # 3 58
-            self.R = nn.Linear(self.hidden_size, rank, bias=False)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, rank, bias=False)
-
-        elif self.shift_version in ('v2pre_glu_bias', ):
-            self.R = nn.Linear(self.hidden_size, rank, bias=True)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            self.scale = nn.Linear(self.hidden_size, rank, bias=False)
-
-        elif self.shift_version in ('v2pre_sae', ):
-            self.R = nn.Linear(self.hidden_size, rank, bias=True)
-            self.W = nn.Linear(rank, self.hidden_size, bias=False)
-            # self.scale = nn.Linear(self.hidden_size, rank, bias=False)
-
+            elif self.shift_version in ('v3_wo_mlp_tanh'): # 4
+                # self.R = nn.Linear(self.hidden_size, rank, bias=False)
+                # self.W = nn.Linear(rank, self.hidden_size, bias=False)
+                self.scale = nn.Linear(2 * self.hidden_size, 1, bias=False)
 
         self.last_hiddent_state = None
         self.hidden_state = None
@@ -336,294 +284,40 @@ class Qwen2MLP_shift(nn.Module):
 
             hidden_state_shift = F.pad(hidden_state[:, :-1, :], (0, 0, 1, 0))
             
-            # v1
-            # score = F.softmax(self.shift_weight(torch.cat([hidden_state, hidden_state_shift], dim=-1)), dim=-1).bfloat16()
-            # conv_hidden_state = score[:, :, 0].unsqueeze(2) * hidden_state + score[:, :, 1].unsqueeze(2) * hidden_state_shift
+            if self.shift:
+                if self.shift_version in ('v3cat_scale_glu_relu'):
+                    act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
 
-            # # v2 gate
-            # score = self.shift_weight(hidden_state_shift)
-            # conv_hidden_state = (1 - score) * hidden_state + score * hidden_state_shift
-            # return self.down_proj(self.act_fn(conv_hidden_state) * self.up_proj(hidden_state))
+                    alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
+                    hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
 
-            # # v2.1 gate and up
-            # score = self.shift_weight(torch.cat([hidden_state, hidden_state_shift], dim=-1))
-            # conv_hidden_state = (1 - score) * hidden_state + score * hidden_state_shift
-            # return self.down_proj(self.act_fn(self.gate_proj(conv_hidden_state)) * self.up_proj(conv_hidden_state))
+                elif self.shift_version in ('v3_wo_h_i_1_relu'):
+                    act_fn = F.relu
 
-            # # v2.2 gate and up two score
-            # score = self.shift_weight(torch.cat([hidden_state, hidden_state_shift], dim=-1))
-            # score1 = score[:, :, 0].unsqueeze(2)
-            # conv_hidden_state_1 = (1 - score1) * hidden_state + score1 * hidden_state_shift
+                    alpha = act_fn(self.scale(hidden_state))
+                    hidden_state = hidden_state + self.W(self.R(hidden_state) * alpha)
+                    
+                elif self.shift_version in ('v3_wo_h_i_in_gate_relu'):
+                    act_fn = F.relu
 
-            # score2 = score[:, :, 1].unsqueeze(2)
-            # conv_hidden_state_2 = (1 - score2) * hidden_state + score2 * hidden_state_shift
+                    alpha = act_fn(self.scale(hidden_state_shift))
+                    hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
+                    
+                elif self.shift_version in ('v3_wo_gate'):
+                    act_fn = F.relu
 
-            # return self.down_proj(self.act_fn(self.gate_proj(conv_hidden_state_1)) * self.up_proj(conv_hidden_state_2))
+                    hidden_state = hidden_state + self.W(self.R(hidden_state))
+                    
+                elif self.shift_version in ('v3_wo_mlp_tanh'):
+                    act_fn = F.tanh
 
-            # # v2.3 inter
-            # # bsz, hidden_size, intermediate_size
-            # rotated_base = self.R(hidden_state)
-            # conv_hidden_state = hidden_state + torch.matmul((self.W(hidden_state_shift) - rotated_base), self.R.weight)
-            
-            # return self.down_proj(self.act_fn(self.gate_proj(conv_hidden_state)) * self.up_proj(conv_hidden_state))
-
-            # # v3
-            # score = self.shift_weight(torch.cat([hidden_state, hidden_state_shift], dim=-1))
-            # shift_gate = (self.gate_b(self.gate_a(hidden_state_shift)) + self.gate_proj(hidden_state_shift)) * score
-
-            # ori_gate = self.gate_proj(hidden_state)
-
-            # final_gate = ori_gate + shift_gate
-
-            # v3.1 inter gate output
-            # v3.2 add alpha
-            # alpha = F.sigmoid(self.scale(hidden_state_shift - hidden_state)) * 2
-            # shift_gate = self.W(self.R(hidden_state_shift - hidden_state)) * alpha
-
-            # # 3.3 concat
-            # shift_gate = self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-            # ori_gate = self.gate_proj(hidden_state)
-
-            # final_gate = ori_gate + shift_gate
-            
-            # return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-
-            # 3.4 no bias
-            # shift_gate = self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-            
-            # ori_gate = self.gate_proj(hidden_state)
-
-            # final_gate = ori_gate + shift_gate
-            
-            # return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-
-            if self.shift_version in ('v4.0',):
-                alpha = F.sigmoid(self.scale(hidden_state_shift))
-                shift_gate = self.W(self.R(hidden_state_shift)) * alpha
-                
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-
-            elif self.shift_version in ('v4cat', ):
-                alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                shift_gate = self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1))) * alpha
-                
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-
-            elif self.shift_version in ('v4cat_scale', ):
-                alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                shift_gate = self.W(self.R(hidden_state_shift)) * alpha
-                
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-
-            elif self.shift_version in ('v4sub', ):
-                alpha = F.sigmoid(self.scale(hidden_state - hidden_state_shift))
-                shift_gate = self.W(self.R(hidden_state - hidden_state_shift)) * alpha
-            
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-
-            elif self.shift_version in ('v4pre', ):
-                alpha = F.sigmoid(self.scale(hidden_state_shift))
-                shift_gate = self.W(self.R(hidden_state_shift)) * alpha
-            
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-
-            elif self.shift_version in ('v4pre_glu', 'v4pre_glu_bias', ):
-                alpha = F.sigmoid(self.scale(hidden_state_shift))
-                shift_gate = self.W(self.R(hidden_state_shift) * alpha)
-            
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-
-            elif self.shift_version in ('v2cat',):
-                alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1))) * alpha
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2cat_scale',):
-                alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift)) * alpha
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu'):
-                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
-
-                alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v3cat_scale_glu_relu'):
-                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
-
-                alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-                hidden_state = conv_hidden_state
-
-            elif self.shift_version in ('v4cat_scale_glu_relu'):
-                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
-
-                alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha)
-                
-                final_gate = self.gate_proj(hidden_state)
-                hidden_state = conv_hidden_state
-
-            elif self.shift_version in ('v2cat_glu',):
-                alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1)) * alpha)
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2cat_glu_silu',):
-                alpha = self.act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-                conv_hidden_state = hidden_state + self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1)) * alpha)
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2sub',):
-                alpha = F.sigmoid(self.scale(hidden_state - hidden_state_shift))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state - hidden_state_shift)) * alpha
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2pre',):
-                alpha = F.sigmoid(self.scale(hidden_state_shift))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift)) * alpha
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2pre_glu', 'v2pre_glu_relu'):
-                act_fn = F.relu if 'relu' in self.shift_version else F.sigmoid
-
-                alpha = act_fn(self.scale(hidden_state_shift))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha) 
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2pre_glu_silu', ):
-                alpha = self.act_fn(self.scale(hidden_state_shift))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state_shift) * alpha) 
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2pre_sae',):
-                conv_hidden_state = hidden_state + self.W(self.act_fn(self.R(hidden_state_shift)))
-                
-                final_gate = self.gate_proj(conv_hidden_state)
-
-            elif self.shift_version in ('v2.7',):
-                alpha = F.sigmoid(self.scale(hidden_state - hidden_state_shift))
-                conv_hidden_state = hidden_state + self.W(self.R(hidden_state - hidden_state_shift)) * alpha
-                
-                return self.down_proj(self.act_fn(self.gate_proj(conv_hidden_state)) * self.up_proj(hidden_state))
-
-            elif self.shift_version in ('v3.6',):
-                alpha = F.sigmoid(self.scale(hidden_state))
-                shift_gate = self.W(self.R(hidden_state_shift)) * alpha
-                
-                ori_gate = self.gate_proj(hidden_state)
-                
-                final_gate = ori_gate + shift_gate
-                
-                return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-
-            # if os.environ['SHIFT_VERSION'] in ('v3.5', ):
-            #     # 3.5 concat + scale
-            #     alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-            #     shift_gate = self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1))) * alpha
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-            
-            # if os.environ['SHIFT_VERSION'] in ('v3.5-sub', ):
-            #     alpha = F.sigmoid(self.scale(hidden_state - hidden_state_shift))
-            #     shift_gate = self.W(self.R(hidden_state - hidden_state_shift)) * alpha
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-
-            # if os.environ['SHIFT_VERSION'] in ('v3.5-hi-1', ):
-            #     alpha = F.sigmoid(self.scale(hidden_state_shift))
-            #     shift_gate = self.W(self.R(hidden_state_shift)) * alpha
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-
-            # if os.environ['SHIFT_VERSION'] in ('v3.5-abl1', ):
-            #     # only hi
-            #     alpha = F.sigmoid(self.scale(torch.concat([hidden_state, hidden_state], dim=-1)))
-            #     shift_gate = self.W(self.R(torch.concat([hidden_state, hidden_state], dim=-1))) * alpha
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-
-            # if os.environ['SHIFT_VERSION'] in ('v3.5-abl2', ):
-            #     # only hi-1
-            #     alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state_shift], dim=-1)))
-            #     shift_gate = self.W(self.R(torch.concat([hidden_state_shift, hidden_state_shift], dim=-1))) * alpha
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-                
-            # if os.environ['SHIFT_VERSION'] in ('v3.6', ):
-            #     # 3.5 concat + scale
-            #     alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-            #     alpha1 = alpha[:, :, 0].unsqueeze(2)
-            #     alpha2 = alpha[:, :, 0].unsqueeze(2)
-            #     shift_gate = self.W(self.R(torch.concat([hidden_state_shift * alpha1, hidden_state * alpha2], dim=-1)))
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-            
-            # if os.environ['SHIFT_VERSION'] in ('v3.7', ):
-            #     # 3.5 concat + scale
-            #     alpha = F.sigmoid(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-            #     conv_h = self.W(self.R(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
-            #     shift_gate = self.gate_proj(conv_h) * alpha
-                
-            #     ori_gate = self.gate_proj(hidden_state)
-                
-            #     final_gate = ori_gate + shift_gate
-                
-            #     return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
-            
+                    alpha = act_fn(self.scale(torch.concat([hidden_state_shift, hidden_state], dim=-1)))
+                    hidden_state = hidden_state + hidden_state_shift * alpha
+                    
         else:
             raise NotImplementedError
 
-        return self.down_proj(self.act_fn(final_gate) * self.up_proj(hidden_state))
+        return self.down_proj(self.act_fn(self.gate_proj(hidden_state)) * self.up_proj(hidden_state))
 
 
 # Copied from transformers.models.llama.modeling_llama.repeat_kv

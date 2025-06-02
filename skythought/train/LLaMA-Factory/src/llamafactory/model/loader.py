@@ -149,7 +149,9 @@ def load_model(
         init_kwargs["pretrained_model_name_or_path"] = model_args.model_name_or_path
 
         if load_bare_model:
-            init_kwargs['device_map'] = 'cpu' 
+            from transformers.integrations.deepspeed import unset_hf_deepspeed_config
+            unset_hf_deepspeed_config()
+            # init_kwargs['device_map'] = 'auto'
         
         if model_args.mixture_of_depths == "load":
             model = load_mod_pretrained_model(**init_kwargs)
@@ -175,7 +177,7 @@ def load_model(
                         model = LlamaForCausalLM.from_pretrained(**init_kwargs)
                     else:
                         raise NotImplementedError
-
+                    print('load shift gate model')
                     if not load_bare_model:
                         with torch.no_grad():
                             for name, module in model.named_modules():

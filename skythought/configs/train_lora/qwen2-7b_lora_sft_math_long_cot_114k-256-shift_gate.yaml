@@ -23,8 +23,9 @@ preprocessing_num_workers: 16
 ### output
 output_dir: qwen2-7b_lora_sft_math_long_cot_114k-256-shift_gate
 logging_steps: 1
-save_steps: 200
+save_steps: 1000
 plot_loss: true
+save_total_limit: 1
 
 ### train
 per_device_train_batch_size: 1
@@ -40,3 +41,4 @@ ddp_timeout: 180000000
 report_to: wandb
 run_name: qwen2-7b_lora_sft_math_long_cot_114k-256-shift_gate
 
+resume_from_checkpoint: true

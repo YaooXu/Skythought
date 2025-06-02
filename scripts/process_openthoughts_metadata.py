@@ -148,40 +148,121 @@ with open(output_dir + "math_short_cot_samples-40k.json", "w") as f:
     json.dump(short_cot_samples[:40000], f, indent=4)
 
 
+with open(output_dir + "math_long_cot_samples-20k.json", "w") as f:
+    json.dump(long_cot_samples[:20000], f, indent=4)
+with open(output_dir + "math_short_cot_samples-20k.json", "w") as f:
+    json.dump(short_cot_samples[:20000], f, indent=4)
+
+
 with open(output_dir + "math_long_cot_samples-10k.json", "w") as f:
     json.dump(long_cot_samples[:10000], f, indent=4)
 with open(output_dir + "math_short_cot_samples-10k.json", "w") as f:
     json.dump(short_cot_samples[:10000], f, indent=4)
 
 
-# def analysis_token_length(file_name):
-#     # 初始化一个列表来存储每个样本的 token 长度
-#     token_lengths = []
+long_cot_filename = output_dir + "math_long_cot_samples-10k.json"
+short_cot_filename = output_dir + "math_short_cot_samples-10k.json"
+def analysis_token_length(file_path1, file_path2, label1, label2):
+    """
+    Analyzes token lengths from two JSON files and plots their distributions
+    on a single histogram with shared x and y axes.
 
-#     with open(file_name, 'r') as f:
-#         samples = json.load(f)
-        
-#     for sample in tqdm.tqdm(samples):
-#         # 拼接所有对话中的 value 内容
-#         combined_text = sample['conversations'][-1]['value']
-#         # 对拼接后的文本进行编码
-#         encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
-#         # 获取 token 长度
-#         token_length = encoded['input_ids'].shape[1]
-#         # 将 token 长度添加到列表中
-#         token_lengths.append(token_length)
-        
-#     # 将 token 长度转换为 numpy 数组
-#     token_lengths = np.array(token_lengths)
-    
-#     plt.hist(token_lengths, bins=50, edgecolor='black')
-#     plt.title('Token Length Distribution')
-#     plt.xlabel('Token Length')
-#     plt.ylabel('Frequency')
-#     # plt.savefig(f'{file_name.split}.png')
-#     plt.show()
+    Args:
+        file_path1 (str): Path to the first JSON file.
+        file_path2 (str): Path to the second JSON file.
+        label1 (str): Label for the first dataset in the plot legend.
+        label2 (str): Label for the second dataset in the plot legend.
+    """
+    plt.figure(figsize=(5, 6))
 
-#     return token_lengths
+    all_token_lengths = [] # To store all lengths for global x-axis range
 
-# analysis_token_length(long_cot_filename)
-# analysis_token_length(short_cot_filename)
+    # --- Process the first file ---
+    token_lengths1 = []
+    try:
+        with open(file_path1, 'r') as f:
+            samples1 = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path1}. Skipping this dataset.")
+        samples1 = [] # Set to empty list to avoid errors
+    except json.JSONDecodeError:
+        print(f"Error: Invalid JSON in {file_path1}. Skipping this dataset.")
+        samples1 = [] # Set to empty list to avoid errors
+
+    for sample in samples1:
+        combined_text = ''
+        # Assumes conversations is a list and value is in the last element
+        if 'conversations' in sample and isinstance(sample['conversations'], list) and len(sample['conversations']) > 0:
+            if 'value' in sample['conversations'][-1]:
+                combined_text = sample['conversations'][-1]['value']
+        # Fallback for simpler JSON structures where 'value' might be directly in the sample
+        elif 'value' in sample:
+            combined_text = sample['value']
+
+        if combined_text:
+            encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
+            length = encoded['input_ids'].shape[1]
+            token_lengths1.append(length)
+            all_token_lengths.append(length)
+
+    # --- Process the second file ---
+    token_lengths2 = []
+    try:
+        with open(file_path2, 'r') as f:
+            samples2 = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path2}. Skipping this dataset.")
+        samples2 = []
+    except json.JSONDecodeError:
+        print(f"Error: Invalid JSON in {file_path2}. Skipping this dataset.")
+        samples2 = []
+
+    for sample in samples2:
+        combined_text = ''
+        if 'conversations' in sample and isinstance(sample['conversations'], list) and len(sample['conversations']) > 0:
+            if 'value' in sample['conversations'][-1]:
+                combined_text = sample['conversations'][-1]['value']
+        elif 'value' in sample:
+            combined_text = sample['value']
+
+        if combined_text:
+            encoded = tokenizer(combined_text, return_tensors='pt', truncation=True, padding=True)
+            length = encoded['input_ids'].shape[1]
+            token_lengths2.append(length)
+            all_token_lengths.append(length)
+
+    # --- Determine common bins for consistent x-axis ---
+    # if all_token_lengths:
+    #     max_len = np.max(all_token_lengths)
+    #     min_len = np.min(all_token_lengths)
+    #     bins = np.linspace(min_len, max_len, 50) # Use 50 bins across the whole range
+    # else:
+    #     bins = 50 # Default if no data to avoid errors
+    bins = np.linspace(0, 16000, 50)
+    # --- Plot both histograms on the same figure ---
+    # `bins` ensures both histograms use the same x-axis binning.
+    # `edgecolor='black'` adds a black border to each bar.
+    # `alpha=0.7` makes the bars semi-transparent so overlaps are visible.
+    # `label` is used for the legend.
+    # The return values `counts` and `_` (bin edges are not directly used here)
+    counts1, _, _ = plt.hist(token_lengths1, bins=bins, edgecolor='black', alpha=0.7, label=label1)
+    counts2, _, _ = plt.hist(token_lengths2, bins=bins, edgecolor='black', alpha=0.7, label=label2)
+
+    # --- Set common Y-axis limits ---
+    max_freq = 0
+    if len(counts1) > 0:
+        max_freq = max(max_freq, np.max(counts1))
+    if len(counts2) > 0:
+        max_freq = max(max_freq, np.max(counts2))
+
+    if max_freq > 0:
+        plt.ylim(0, max_freq * 1.05) # Add 5% buffer on top for visual clarity
+
+    plt.title('Token Length Distribution Comparison')
+    plt.xlabel('Token Length')
+    plt.ylabel('Frequency')
+    plt.legend() # Displays the labels from the 'label' argument in plt.hist
+    plt.grid(axis='y', alpha=0.75) # Adds a light horizontal grid for readability
+    plt.show() # Displays the plot
+
+# analysis_token_length(long_cot_filename, short_cot_filename, 'Long COT', 'Short COT')

@@ -237,7 +237,7 @@ done
 # )
 
 # train_configs=(
-#     "configs/train_full_lfy/qwen2-7b_full_sft_math_long_cot_114k-shift_gate.yaml|256"
+#     "configs/train_lora_lfy/qwen2-7b_full_sft_math_long_cot_114k-shift_gate.yaml|256"
 # )
 
 # # 遍历每个配置

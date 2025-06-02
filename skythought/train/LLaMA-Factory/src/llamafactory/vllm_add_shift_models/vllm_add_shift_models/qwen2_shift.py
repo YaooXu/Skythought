@@ -37,7 +37,8 @@ from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
                                                QKVParallelLinear,
-                                               RowParallelLinear)
+                                               RowParallelLinear,
+                                               ColumnParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.pooler import Pooler, PoolingType
 from vllm.model_executor.layers.quantization import QuantizationConfig
@@ -212,28 +213,15 @@ class Qwen2MLP(nn.Module):
         hidden_act: str,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
+        layer_idx: int=0
     ) -> None:
         super().__init__()
-        # self.gate_up_proj = MergedColumnParallelLinear(
-        #     hidden_size,
-        #     [intermediate_size] * 2,
-        #     bias=False,
-        #     quant_config=quant_config,
-        #     prefix=f"{prefix}.gate_up_proj",
-        # )
-        self.up_proj = RowParallelLinear(
+        self.gate_up_proj = MergedColumnParallelLinear(
             hidden_size,
-            intermediate_size,
+            [intermediate_size] * 2,
             bias=False,
             quant_config=quant_config,
-            prefix=f"{prefix}.up_proj",
-        )
-        self.gate_proj = RowParallelLinear(
-            hidden_size,
-            intermediate_size,
-            bias=False,
-            quant_config=quant_config,
-            prefix=f"{prefix}.gate_proj",
+            prefix=f"{prefix}.gate_up_proj",
         )
         
         self.down_proj = RowParallelLinear(
@@ -248,496 +236,135 @@ class Qwen2MLP(nn.Module):
     
         self.shift_version = os.environ.get('SHIFT_VERSION', '').split('-')[0]
 
-        if self.shift_version in ('v4cat', ):
-            self.R = RowParallelLinear(
-                2 * hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+        st_layer_idx = int(os.environ['ST_LAYER_IDX'])
+        self.shift = layer_idx >= st_layer_idx
 
-            self.scale = RowParallelLinear(
-                2 * hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+        if self.shift:
+            if self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu', 'v3cat_scale_glu_relu', 'v4cat_scale_glu_relu'):
+                self.R = ColumnParallelLinear( # not split X
+                    hidden_size,
+                    rank,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
+                    
+                self.scale = ColumnParallelLinear(
+                    2 * hidden_size,
+                    rank,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
 
-        if self.shift_version in ('v4cat_scale',):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+                self.W = RowParallelLinear( # split X
+                    rank,
+                    hidden_size,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
 
-            self.scale = RowParallelLinear(
-                2 * hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+            if self.shift_version in ('v3_wo_h_i_1_relu', 'v3_wo_h_i_in_gate_relu'):
+                self.R = ColumnParallelLinear(
+                    hidden_size,
+                    rank,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
+                    
+                self.scale = ColumnParallelLinear(
+                    hidden_size,
+                    rank,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
 
-        if self.shift_version in ('v4sub', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=True,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+                self.W = RowParallelLinear(
+                    rank,
+                    hidden_size,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
 
-            self.scale = RowParallelLinear(
-                hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
 
-        if self.shift_version in ('v4pre', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+            if self.shift_version in ('v3_wo_gate'):
+                self.R = ColumnParallelLinear(
+                    hidden_size,
+                    rank,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
+                    
+                self.W = RowParallelLinear(
+                    rank,
+                    hidden_size,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
 
-            self.scale = RowParallelLinear(
-                hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
+            if self.shift_version in ('v3_wo_mlp_tanh'):
+                self.scale = ColumnParallelLinear(
+                    2 * hidden_size,
+                    1,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.shift_weight",
+                )
 
-        if self.shift_version in ('v4pre_glu', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                intermediate_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2cat', ):
-            self.R = RowParallelLinear(
-                2 * hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                2 * hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2cat_scale', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                2 * hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2cat_scale_glu_relu', 'v2cat_scale_glu', 'v3cat_scale_glu_relu', 'v4cat_scale_glu_relu'):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                2 * hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-            
-        if self.shift_version in ('v2cat_glu', 'v2cat_glu_silu'):
-            self.R = RowParallelLinear(
-                2 * hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                2 * hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2sub', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=True,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2pre', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                1,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2pre_sae', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=True,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2pre_glu', 'v2pre_glu_relu'):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version in ('v2pre_glu_bias', ):
-            self.R = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=True,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-                
-            self.W = RowParallelLinear(
-                rank,
-                hidden_size,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-            self.scale = RowParallelLinear(
-                hidden_size,
-                rank,
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.shift_weight",
-            )
-
-        if self.shift_version == "v2cat":
-            self.get_final_gate = self.get_final_gate_v2cat
-        elif self.shift_version == "v2cat_scale":
-            self.get_final_gate = self.get_final_gate_v2cat_scale
-        elif self.shift_version == "v2cat_scale_glu_relu":
-            self.get_final_gate = self.get_final_gate_v2cat_scale_glu_relu
-        elif self.shift_version == "v3cat_scale_glu_relu":
-            self.get_final_gate = self.get_final_gate_v3cat_scale_glu_relu
-        elif self.shift_version == "v4cat_scale_glu_relu":
-            self.get_final_gate = self.get_final_gate_v4cat_scale_glu_relu
-        elif self.shift_version == "v2cat_scale_glu":
-            self.get_final_gate = self.get_final_gate_v2cat_scale_glu
-        elif self.shift_version == "v2cat_glu":
-            self.get_final_gate = self.get_final_gate_v2cat_glu
-        elif self.shift_version == "v2cat_glu_silu":
-            self.get_final_gate = self.get_final_gate_v2cat_glu_silu
-        elif self.shift_version == "v4cat":
-            self.get_final_gate = self.get_final_gate_v4cat
-        elif self.shift_version == "v2sub":
-            self.get_final_gate = self.get_final_gate_v2sub
-        elif self.shift_version == "v4sub":
-            self.get_final_gate = self.get_final_gate_v4sub
-        elif self.shift_version == "v2pre":
-            self.get_final_gate = self.get_final_gate_v2pre
-        elif self.shift_version == "v2pre_sae":
-            self.get_final_gate = self.get_final_gate_v2pre_sae
-        elif self.shift_version in ("v2pre_glu", 'v2pre_glu_bias'):
-            self.get_final_gate = self.get_final_gate_v2pre_glu
-        elif self.shift_version in ("v2pre_glu_relu",):
-            self.get_final_gate = self.get_final_gate_v2pre_glu_relu
-        elif self.shift_version == "v4pre_glu":
-            self.get_final_gate = self.get_final_gate_v4pre_glu
-        elif self.shift_version == "v4pre":
-            self.get_final_gate = self.get_final_gate_v4pre
-        elif self.shift_version in ('v4cat_scale', ):
-            self.get_final_gate = self.get_final_gate_v4cat_scale
+            if self.shift_version == "v3cat_scale_glu_relu":
+                self.get_conv_hidden_states = self.get_conv_hidden_states_v3cat_scale_glu_relu
+            elif self.shift_version == "v3_wo_h_i_1_relu":
+                self.get_conv_hidden_states = self.get_conv_hidden_states_v3_wo_h_i_1_relu
+            elif self.shift_version == "v3_wo_h_i_in_gate_relu":
+                self.get_conv_hidden_states = self.get_conv_hidden_states_v3_wo_h_i_in_gate_relu
+            elif self.shift_version == "v3_wo_gate":
+                self.get_conv_hidden_states = self.get_conv_hidden_states_v3_wo_gate
+            elif self.shift_version == "v3_wo_mlp_tanh":
+                self.get_conv_hidden_states = self.get_conv_hidden_states_v3_wo_mlp_tanh
+            else:
+                raise NotImplementedError
         else:
-            raise NotImplementedError
+            self.get_conv_hidden_states = self.get_conv_hidden_states_original
 
         if hidden_act != "silu":
             raise ValueError(f"Unsupported activation: {hidden_act}. "
                              "Only silu is supported for now.")
-        self.act_fn = nn.SiLU()
+        self.act_fn = SiluAndMul()
 
         self.last_x = None
         self.prefix = prefix
 
-    def get_final_gate_v4cat(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        shift_gate = self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])[0] * alpha
-        ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate, hidden_states
-
-    def get_final_gate_v4cat_scale(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        shift_gate = self.W(self.R(prev_hidden_states)[0])[0] * alpha
-        ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate, hidden_states
-
-    def get_final_gate_v2cat(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])[0] * alpha
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v2cat_scale(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v2cat_scale_glu(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v2cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
+    def get_conv_hidden_states_original(self, hidden_states, prev_hidden_states):
+        return hidden_states
+    def get_conv_hidden_states_v3cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
+        # 【32768, 5120 * 2] \times []
         alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
+        return conv_hidden_states
 
-    def get_final_gate_v3cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
-        alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, conv_hidden_states
-
-    def get_final_gate_v4cat_scale_glu_relu(self, hidden_states, prev_hidden_states):
-        alpha = F.relu(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
-        final_gate = self.gate_proj(hidden_states)[0]
-        return final_gate, conv_hidden_states
-        
-    def get_final_gate_v2cat_glu(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v2cat_glu_silu(self, hidden_states, prev_hidden_states):
-        alpha = self.act_fn(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
-        conv_hidden_states = hidden_states + self.W(self.R(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v4sub(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(hidden_states - prev_hidden_states)[0])
-        shift_gate = self.W(self.R(hidden_states - prev_hidden_states)[0])[0] * alpha
-        ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate, hidden_states
-
-    def get_final_gate_v2sub(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(hidden_states - prev_hidden_states)[0])
-        conv_hidden_states = hidden_states + self.W(self.R(hidden_states - prev_hidden_states)[0])[0] * alpha
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v4pre(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
-        shift_gate = self.W(self.R(prev_hidden_states)[0])[0] * alpha
-        ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate, hidden_states
-
-    def get_final_gate_v4pre_glu(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
-        shift_gate = self.W(self.R(prev_hidden_states)[0] * alpha )[0]
-        ori_gate = self.gate_proj(hidden_states)[0]
-        return ori_gate + shift_gate, hidden_states
-
-    def get_final_gate_v2pre(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
-        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0] * alpha
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v2pre_glu(self, hidden_states, prev_hidden_states):
-        alpha = F.sigmoid(self.scale(prev_hidden_states)[0])
-        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
-
-    def get_final_gate_v2pre_glu_relu(self, hidden_states, prev_hidden_states):
+    def get_conv_hidden_states_v3_wo_h_i_1_relu(self, hidden_states, prev_hidden_states):
+        alpha = F.relu(self.scale(hidden_states)[0])
+        conv_hidden_states = hidden_states + self.W(self.R(hidden_states)[0] * alpha)[0]
+        return conv_hidden_states
+    def get_conv_hidden_states_v3_wo_h_i_in_gate_relu(self, hidden_states, prev_hidden_states):
         alpha = F.relu(self.scale(prev_hidden_states)[0])
         conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0] * alpha)[0]
-        final_gate = self.gate_proj(conv_hidden_states)[0]
-        return final_gate, hidden_states
+        return conv_hidden_states
+
+    def get_conv_hidden_states_v3_wo_gate(self, hidden_states, prev_hidden_states):
+        conv_hidden_states = hidden_states + self.W(self.R(prev_hidden_states)[0])[0]
+        return conv_hidden_states
+
+    def get_conv_hidden_states_v3_wo_mlp_tanh(self, hidden_states, prev_hidden_states):
+        alpha = F.tanh(self.scale(torch.concat([prev_hidden_states, hidden_states], dim=-1))[0])
+        conv_hidden_states = hidden_states + prev_hidden_states * alpha
+        return conv_hidden_states
 
     def forward(self, hidden_states, attn_metadata, last_kv_cache, last_kv_indices):
         """
@@ -773,12 +400,11 @@ class Qwen2MLP(nn.Module):
 
             last_kv_cache[last_token_indices] = decode_hidden
 
-        final_gate, hidden_states = self.get_final_gate(hidden_states, prev_hidden_states)
-        
-        up, _ = self.up_proj(hidden_states)
-        hidden_states = self.act_fn(final_gate) * up
+        hidden_states = self.get_conv_hidden_states(hidden_states, prev_hidden_states)
+
+        gate_up, _ = self.gate_up_proj(hidden_states)
+        hidden_states = self.act_fn(gate_up)
         hidden_states, _ = self.down_proj(hidden_states)
-        
         return hidden_states
     
 
@@ -907,6 +533,7 @@ class Qwen2DecoderLayer(nn.Module):
             hidden_act=config.hidden_act,
             quant_config=quant_config,
             prefix=f"{prefix}.mlp",
+            layer_idx=int(prefix.split('.')[-1])
         )
         self.input_layernorm = RMSNorm(config.hidden_size,
                                        eps=config.rms_norm_eps)
@@ -1090,8 +717,8 @@ class Qwen2Model(nn.Module):
             ("qkv_proj", "q_proj", "q"),
             ("qkv_proj", "k_proj", "k"),
             ("qkv_proj", "v_proj", "v"),
-            # ("gate_up_proj", "gate_proj", 0),
-            # ("gate_up_proj", "up_proj", 1),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
         ]
         params_dict = dict(self.named_parameters(remove_duplicate=False))
         loaded_params: Set[str] = set()
@@ -1147,17 +774,17 @@ class ShiftQwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP, HasInnerState):
             "k_proj",
             "v_proj",
         ],
-        # "gate_up_proj": [
-        #     "gate_proj",
-        #     "up_proj",
-        # ],
+        "gate_up_proj": [
+            "gate_proj",
+            "up_proj",
+        ],
     }
 
     # LoRA specific attributes
     supported_lora_modules = [
         "qkv_proj",
         "o_proj",
-        # "gate_up_proj",
+        "gate_up_proj",
         "down_proj",
     ]
     embedding_modules = {}
@@ -1254,17 +881,17 @@ class Qwen2EmbeddingModel(nn.Module, SupportsLoRA, SupportsPP):
             "k_proj",
             "v_proj",
         ],
-        # "gate_up_proj": [
-        #     "gate_proj",
-        #     "up_proj",
-        # ],
+        "gate_up_proj": [
+            "gate_proj",
+            "up_proj",
+        ],
     }
 
     # LoRA specific attributes
     supported_lora_modules = [
         "qkv_proj",
         "o_proj",
-        # "gate_up_proj",
+        "gate_up_proj",
         "down_proj",
     ]
     embedding_modules = {}

@@ -33,12 +33,34 @@ def merge_predictions(prediction_files, output_file):
     print(f"✅ 合并完成，输出文件: {output_file}")
 
 # 示例调用
-task = 'math500'
-name = 'save_qwen2-7b_full_sft_math_long_cot_20k'
-# name = 'save_qwen2-7b_lora_sft_math_long_cot_20k-256-shift_gate_v3cat_scale_glu_relu-256'
+# task = 'math500'
+# task = 'aime24'
+task = 'olympiadbench_math_en'
+# task = 'amc23'
 
-prediction_files = glob.glob(f'skythought/evaluate_results_n-temp0.6-tp95-h-f50/{task}/**/*{name}*/results.json', recursive=True)
+names = [
+    'save_qwen2-7b_full_sft_math_long_cot_20k',
+    'save_qwen2-7b_lora_sft_math_long_cot_20k-64_complete_ckpt',
+    'save_qwen2-7b_lora_sft_math_long_cot_20k-128_complete_ckpt',
+    'save_qwen2-7b_lora_sft_math_long_cot_20k-256_complete_ckpt',
+    # 'save_qwen2-7b_lora_sft_math_long_cot_20k-296_complete_ckpt',
+    'save_qwen2-7b_lora_sft_math_long_cot_20k-256-shift_gate_v3cat_scale_glu_relu-256_complete_ckpt'
+]
 
-print(prediction_files)
+idx_ranges = [
+    '0_50',
+    '100_150'
+]
 
-merge_predictions(prediction_files, f'h-merged_predictions-{name}-{task}.json')
+dirs = [
+    f"evaluate_results_n-temp0.6-tp95-h-{idx_range}" for idx_range in idx_ranges
+]
+# dir = "evaluate_results_n-temp0.6-tp95-h-100_150"
+
+for name in names:
+    prediction_files = [list(glob.glob(f'skythought/{dir}/{task}/**/*{name}_{task}*/results.json', recursive=True)) for dir in dirs]
+    prediction_files = [item for sublist in prediction_files for item in sublist]
+
+    print(prediction_files)
+
+    merge_predictions(prediction_files, f"{'-'.join(idx_ranges)}-{name}-{task}.json")

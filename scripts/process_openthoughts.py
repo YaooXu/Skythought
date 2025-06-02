@@ -91,6 +91,12 @@ with open(short_filename, 'w', encoding='utf-8') as f:
     json.dump(short_cot_samples, f, ensure_ascii=False, indent=4)
 
 
+# with open(long_filename, 'r') as f:
+#     long_cot_samples = json.load(f)
+
+# with open(short_filename, 'r') as f:
+#     short_cot_samples = json.load(f)
+
 # # 分别统计 token 数量
 # long_lengths = []
 # short_lengths = []
